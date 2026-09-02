@@ -8,7 +8,22 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+import warnings
 from dotenv import load_dotenv
+
+# Suppress known deprecation warnings
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
+warnings.filterwarnings("ignore", message=".*flop counting.*")
+
+# Optimize attention fallback on Windows without Triton (eliminates Dynamo compile warnings)
+try:
+    import triton
+except ImportError:
+    try:
+        import stable_audio_3.models.transformer as _sat
+        _sat.flex_attention_compiled = None
+    except Exception:
+        pass
 
 # Load .env file if present
 load_dotenv()
