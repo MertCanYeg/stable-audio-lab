@@ -1,0 +1,10 @@
+[workspace]
+authors = ["MertCanYeg <61737235+MertCanYeg@users.noreply.github.com>"]
+channels = ["conda-forge"]
+name = "stable-audio-lab"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
