@@ -75,9 +75,10 @@ pixi run ui --model medium
 ```
 Open `http://127.0.0.1:7860` in your browser.
 
-> 💡 **Hardware Tip for 6GB VRAM GPUs (e.g. RTX 4050):**
-> * `small-music` & `small-sfx` use ~2.0 GB VRAM and can comfortably generate up to 120s.
-> * `medium` (1.4B) uses ~5.2 GB VRAM; generating between **10s and 30s** runs smoothly within 6GB VRAM limits.
+> 💡 **Hardware Guide by GPU VRAM:**
+> * **6 GB VRAM (e.g. RTX 4050):** `small-music` & `small-sfx` run up to full 120s (~2.0 GB VRAM). For `medium` (1.4B), **10–30s** runs comfortably.
+> * **8 GB VRAM (e.g. RTX 5060):** `small-music` & `small-sfx` up to 120s. For `medium` (1.4B), you can comfortably generate **30–60s**.
+> * **12 GB+ VRAM:** Capable of generating full multi-minute tracks (up to **380s / ~6.3 mins** on `medium`).
 
 ---
 
@@ -88,8 +89,8 @@ Open `http://127.0.0.1:7860` in your browser.
 | `--prompt` | `-p` | *required* | Text description of the audio |
 | `--negative-prompt`| `-n` | `None` | Qualities or sounds to avoid |
 | `--model` | `-m` | `small-music` | Model variant: `small-music`, `small-sfx`, or `medium` |
-| `--duration` | `-d` | `30.0` | Output duration in seconds (up to 120s) |
-| `--steps` | `-s` | `8` | Diffusion sampling steps (8 is optimal) |
+| `--duration` | `-d` | `30.0` | Output duration in seconds (Small: up to 120s, Medium: up to 380s) |
+| `--steps` | `-s` | `8` | Diffusion sampling steps (8 is optimal for post-trained models) |
 | `--seed` | | `-1` | Seed for reproducibility (`-1` for random) |
 | `--output` | `-o` | `None` | Custom path to save the output `.wav` file |
 | `--no-half` | | `False` | Force float32 precision instead of fp16 |

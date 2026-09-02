@@ -68,7 +68,7 @@ def main():
         "-d",
         type=float,
         default=30.0,
-        help="Duration of audio in seconds (Small supports up to 120s)",
+        help="Duration of audio in seconds (Small up to 120s, Medium up to 380s)",
     )
     parser.add_argument(
         "--steps",

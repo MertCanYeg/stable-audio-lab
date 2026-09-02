@@ -302,8 +302,8 @@ def create_app(model_mode: str = "all"):
                     build_generation_tab(
                         model_name="small-sfx",
                         default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
-                        default_duration=3.0,
-                        max_duration=30.0,
+                        default_duration=5.0,
+                        max_duration=120.0,
                         examples=sfx_examples,
                     )
                 with gr.Tab("🎛️ Medium (1.4B Quality)"):
@@ -311,9 +311,9 @@ def create_app(model_mode: str = "all"):
                         model_name="medium",
                         default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
                         default_duration=15.0,
-                        max_duration=180.0,
+                        max_duration=380.0,
                         examples=medium_examples,
-                        note="💡 **Hardware Guide for Medium (1.4B):** On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **45–60s**. For longer clips, 12GB+ VRAM is recommended.",
+                        note="💡 **Hardware Guide for Medium (1.4B):** Model capacity supports up to **380s (~6.3 mins)**. On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **30–60s**. For full multi-minute tracks, 12GB+ VRAM is recommended.",
                     )
                 with gr.Tab("ℹ️ System Diagnostics"):
                     gr.Markdown("### Workspace & Hardware Information")
@@ -336,8 +336,8 @@ def create_app(model_mode: str = "all"):
             build_generation_tab(
                 model_name="small-sfx",
                 default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
-                default_duration=3.0,
-                max_duration=30.0,
+                default_duration=5.0,
+                max_duration=120.0,
                 examples=sfx_examples,
             )
         elif model_mode == "small-music":
@@ -355,9 +355,9 @@ def create_app(model_mode: str = "all"):
                 model_name="medium",
                 default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
                 default_duration=15.0,
-                max_duration=180.0,
+                max_duration=380.0,
                 examples=medium_examples,
-                note="💡 **Hardware Guide for Medium (1.4B):** On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **45–60s**. For longer clips, 12GB+ VRAM is recommended.",
+                note="💡 **Hardware Guide for Medium (1.4B):** Model capacity supports up to **380s (~6.3 mins)**. On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **30–60s**. For full multi-minute tracks, 12GB+ VRAM is recommended.",
             )
         else:
             gr.Markdown(f"### 🎛️ Stable Audio 3 ({model_mode})")
