@@ -162,10 +162,12 @@ def main():
         slug = slugify(args.prompt)
         out_path = output_dir / f"{timestamp}_{slug}.wav"
 
-    # Save audio: shape is [1, channels, samples]
+    # Save audio: shape is [1, channels, samples] -> transpose to [samples, channels] for soundfile
     sample_rate = model.model.sample_rate
     audio_tensor = audio[0].detach().cpu()
-    torchaudio.save(str(out_path), audio_tensor, sample_rate)
+    audio_np = audio_tensor.numpy().T
+    import soundfile as sf
+    sf.write(str(out_path), audio_np, sample_rate)
 
     print(f"\nGeneration complete in {gen_time:.2f}s!")
     print(f"  Saved to : {out_path.resolve()}")
