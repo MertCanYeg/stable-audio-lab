@@ -104,6 +104,7 @@ stable-audio-lab/
 ├── check_env.py       # Diagnostic script for GPU, PyTorch, and HF Auth
 ├── generate.py        # CLI generation tool
 ├── app.py             # Gradio web interface launcher
+├── LICENSE            # MIT License
 ├── .env.example       # Template for Hugging Face access token
 ├── .gitignore         # Ignores outputs/, .env, and build caches
 └── outputs/           # Destination folder for generated audio files
@@ -115,9 +116,16 @@ stable-audio-lab/
 
 To run this project on another computer:
 ```bash
-git clone <repo-url>
+git clone https://github.com/MertCanYeg/stable-audio-lab.git
 cd stable-audio-lab
 cp .env.example .env   # add your HF_TOKEN
-pixi run ui            # installs environment and launches web UI
+pixi run ui            # automatically installs environment & launches studio
 ```
-Pixi automatically handles Python installation, CUDA runtimes, PyTorch, and dependencies without affecting the host system.
+Pixi automatically handles Python installation, CUDA runtimes, PyTorch, and all dependencies without affecting the host system.
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
+Model weights are provided by Stability AI under the [Stability AI Community License](https://huggingface.co/stabilityai/stable-audio-3-medium).
