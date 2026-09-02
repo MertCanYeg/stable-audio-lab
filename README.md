@@ -75,10 +75,8 @@ pixi run ui --model medium
 ```
 Open `http://127.0.0.1:7860` in your browser.
 
-> 💡 **Hardware Guide by GPU VRAM:**
-> * **6 GB VRAM (e.g. RTX 4050):** `small-music` & `small-sfx` run up to full 120s (~2.0 GB VRAM). For `medium` (1.4B), **10–30s** runs comfortably.
-> * **8 GB VRAM (e.g. RTX 5060):** `small-music` & `small-sfx` up to 120s. For `medium` (1.4B), you can comfortably generate **30–60s**.
-> * **12 GB+ VRAM:** Capable of generating full multi-minute tracks (up to **380s / ~6.3 mins** on `medium`).
+> 💡 **Memory Management:**
+> On Windows (WDDM), the NVIDIA driver automatically provides Shared GPU Memory from system RAM. If a generation requires more memory than dedicated physical VRAM, the driver transparently pages into system RAM rather than raising an out-of-memory error.
 
 ---
 

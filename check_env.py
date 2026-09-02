@@ -38,15 +38,32 @@ def main():
             total_vram_gb = torch.cuda.get_device_properties(current_device).total_memory / (1024**3)
             print(f"Device Count      : {device_count}")
             print(f"Active GPU        : {device_name} (ID: {current_device})")
-            print(f"Total VRAM        : {total_vram_gb:.2f} GB")
-            if total_vram_gb < 7.0:
-                print("Hardware Tier     : 6GB VRAM - Optimal for 'small-music' & 'small-sfx' (up to 120s).")
-                print("                    For 'medium' (1.4B), recommended duration is 10s–30s.")
-            elif total_vram_gb < 11.0:
-                print("Hardware Tier     : 8GB VRAM - Great for 'small-music' & 'small-sfx' (up to 120s).")
-                print("                    For 'medium' (1.4B), comfortable up to 45s–60s.")
-            else:
-                print("Hardware Tier     : 12GB+ VRAM - Capable of full-length generations across all models.")
+            print(f"Dedicated VRAM    : {total_vram_gb:.2f} GB")
+
+            # Query system RAM on Windows
+            try:
+                import ctypes
+                class _MEMORYSTATUSEX(ctypes.Structure):
+                    _fields_ = [
+                        ("dwLength", ctypes.c_ulong),
+                        ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                    ]
+                stat = _MEMORYSTATUSEX()
+                stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+                ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+                sys_ram_gb = stat.ullTotalPhys / (1024**3)
+                shared_gpu_ram_gb = sys_ram_gb / 2.0
+                print(f"System RAM        : {sys_ram_gb:.1f} GB")
+                print(f"Shared GPU Memory : Up to ~{shared_gpu_ram_gb:.1f} GB available (WDDM system RAM fallback)")
+            except Exception:
+                pass
         else:
             print("WARNING: CUDA is not available. Generation will fall back to CPU (slower).")
     except ImportError as e:

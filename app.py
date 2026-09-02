@@ -35,12 +35,34 @@ _MODEL_CACHE = {}
 
 
 def get_device_info():
-    """Return device and VRAM status string."""
+    """Return device, VRAM, and System RAM status string."""
     if torch.cuda.is_available():
         gpu_name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         cuda_ver = torch.version.cuda
-        return f"🚀 **GPU Accelerated:** {gpu_name} ({vram:.1f} GB VRAM) | **PyTorch:** {torch.__version__} | **CUDA:** {cuda_ver}"
+        ram_info = ""
+        try:
+            import ctypes
+            class _M(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            m = _M()
+            m.dwLength = ctypes.sizeof(_M)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            sys_ram = m.ullTotalPhys / (1024**3)
+            ram_info = f" | **System RAM:** {sys_ram:.0f} GB (Shared GPU Memory)"
+        except Exception:
+            pass
+        return f"🚀 **GPU Accelerated:** {gpu_name} ({vram:.1f} GB VRAM){ram_info} | **PyTorch:** {torch.__version__} | **CUDA:** {cuda_ver}"
     return f"⚠️ **Running on CPU** | **PyTorch:** {torch.__version__}"
 
 
@@ -52,7 +74,7 @@ def load_model(model_name: str, use_half: bool = True):
     if model_name in _MODEL_CACHE:
         return _MODEL_CACHE[model_name]
 
-    # When switching to Medium on a 6GB GPU, evict smaller models to maximize VRAM headroom
+    # When loading Medium, evict smaller models from cache to maximize VRAM headroom
     if model_name == "medium" and torch.cuda.is_available():
         _MODEL_CACHE.clear()
         torch.cuda.empty_cache()
@@ -313,7 +335,7 @@ def create_app(model_mode: str = "all"):
                         default_duration=15.0,
                         max_duration=380.0,
                         examples=medium_examples,
-                        note="💡 **Hardware Guide for Medium (1.4B):** Model capacity supports up to **380s (~6.3 mins)**. On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **30–60s**. For full multi-minute tracks, 12GB+ VRAM is recommended.",
+                        note="💡 **Flagship Model:** Stable Audio 3 Medium (1.4B) trained up to **380s (~6.3 mins)**. On Windows, if memory exceeds dedicated VRAM during long generations, the driver automatically utilizes Shared System Memory.",
                     )
                 with gr.Tab("ℹ️ System Diagnostics"):
                     gr.Markdown("### Workspace & Hardware Information")
@@ -357,7 +379,7 @@ def create_app(model_mode: str = "all"):
                 default_duration=15.0,
                 max_duration=380.0,
                 examples=medium_examples,
-                note="💡 **Hardware Guide for Medium (1.4B):** Model capacity supports up to **380s (~6.3 mins)**. On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **30–60s**. For full multi-minute tracks, 12GB+ VRAM is recommended.",
+                note="💡 **Flagship Model:** Stable Audio 3 Medium (1.4B) trained up to **380s (~6.3 mins)**. On Windows, if memory exceeds dedicated VRAM during long generations, the driver automatically utilizes Shared System Memory.",
             )
         else:
             gr.Markdown(f"### 🎛️ Stable Audio 3 ({model_mode})")
