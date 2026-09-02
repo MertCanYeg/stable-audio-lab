@@ -39,6 +39,14 @@ def main():
             print(f"Device Count      : {device_count}")
             print(f"Active GPU        : {device_name} (ID: {current_device})")
             print(f"Total VRAM        : {total_vram_gb:.2f} GB")
+            if total_vram_gb < 7.0:
+                print("Hardware Tier     : 6GB VRAM - Optimal for 'small-music' & 'small-sfx' (up to 120s).")
+                print("                    For 'medium' (1.4B), recommended duration is 10s–30s.")
+            elif total_vram_gb < 11.0:
+                print("Hardware Tier     : 8GB VRAM - Great for 'small-music' & 'small-sfx' (up to 120s).")
+                print("                    For 'medium' (1.4B), comfortable up to 45s–60s.")
+            else:
+                print("Hardware Tier     : 12GB+ VRAM - Capable of full-length generations across all models.")
         else:
             print("WARNING: CUDA is not available. Generation will fall back to CPU (slower).")
     except ImportError as e:
@@ -69,9 +77,11 @@ def main():
             print(f"Hugging Face Auth : Logged in as '{user_info.get('name', 'Unknown')}'")
         else:
             print("Hugging Face Auth : No token detected.")
-            print("                    Note: 'Stable Audio 3 Small' requires accepting the license")
-            print("                    at https://huggingface.co/stabilityai/stable-audio-3-small-music")
-            print("                    and setting HF_TOKEN in your .env file or running `huggingface-cli login`.")
+            print("                    To download model weights, set HF_TOKEN in your .env file or run `huggingface-cli login`.")
+            print("                    Ensure you accepted the license terms on Hugging Face:")
+            print("                    - https://huggingface.co/stabilityai/stable-audio-3-small-music")
+            print("                    - https://huggingface.co/stabilityai/stable-audio-3-small-sfx")
+            print("                    - https://huggingface.co/stabilityai/stable-audio-3-medium")
     except Exception as e:
         print(f"Hugging Face Auth : Unable to verify token: {e}")
 

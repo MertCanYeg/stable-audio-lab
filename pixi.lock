@@ -1,9 +1,7 @@
 version: 7
 platforms:
-- name: win-64-cuda-13-2
-  subdir: win-64
+- name: win-64
   virtual-packages:
-  - __cuda=13.2
   - __win=10.0
   - __archspec=0=x86_64
 environments:
@@ -14,7 +12,7 @@ environments:
     - https://pypi.org/simple
     - https://download.pytorch.org/whl/cu132
     packages:
-      win-64-cuda-13-2:
+      win-64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.7.22-h4c7d964_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/bzip2-1.0.8-h0ad9c76_10.conda

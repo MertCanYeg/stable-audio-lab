@@ -143,15 +143,27 @@ def main():
     if device == "cuda":
         torch.cuda.empty_cache()
 
+    max_sample_size = model.model_config.get("sample_size", 5292032)
+
     gen_start = time.time()
-    audio = model.generate(
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt,
-        duration=args.duration,
-        steps=args.steps,
-        cfg_scale=args.cfg_scale,
-        seed=args.seed,
-    )
+    try:
+        audio = model.generate(
+            prompt=args.prompt,
+            negative_prompt=args.negative_prompt,
+            duration=args.duration,
+            steps=args.steps,
+            cfg_scale=args.cfg_scale,
+            seed=args.seed,
+            sample_size=max_sample_size,
+        )
+    except torch.cuda.OutOfMemoryError:
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        print(f"\n[ERROR] CUDA Out of Memory! Requested {args.duration}s on '{args.model}' exceeded your GPU's VRAM.")
+        print("Troubleshooting tips:")
+        print(f"1. Reduce the duration (e.g. try --duration 15 or 30).")
+        print(f"2. Use 'small-music' instead of 'medium' (small models use only ~2GB VRAM).")
+        return 1
     gen_time = time.time() - gen_start
 
     if device == "cuda":

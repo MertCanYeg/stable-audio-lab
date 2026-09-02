@@ -83,17 +83,42 @@ def generate_audio(
 
     seed_val = int(seed) if seed is not None and seed != -1 else -1
 
-    audio = model.generate(
-        prompt=prompt.strip(),
-        negative_prompt=negative_prompt.strip() if negative_prompt else None,
-        duration=float(duration),
-        steps=int(steps),
-        cfg_scale=float(cfg_scale),
-        seed=seed_val,
-    )
+    # Extract model's configured max sample size (e.g. 5292032 for small models, 16777216 for medium)
+    max_sample_size = model.model_config.get("sample_size", 5292032)
+
+    try:
+        audio = model.generate(
+            prompt=prompt.strip(),
+            negative_prompt=negative_prompt.strip() if negative_prompt else None,
+            duration=float(duration),
+            steps=int(steps),
+            cfg_scale=float(cfg_scale),
+            seed=seed_val,
+            sample_size=max_sample_size,
+        )
+    except torch.cuda.OutOfMemoryError as e:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        import gradio as gr
+        raise gr.Error(
+            f"CUDA Out of Memory! Requested {duration:.0f}s on '{model_name}' exceeded your GPU's VRAM. "
+            f"Tip: Try reducing duration (e.g. 15s-30s) or switch to 'small-music' (~2GB VRAM)."
+        ) from e
+    except Exception as e:
+        if "401" in str(e) or "gated" in str(e).lower():
+            import gradio as gr
+            raise gr.Error(
+                f"License not accepted for '{model_name}'. Please visit "
+                f"https://huggingface.co/stabilityai/stable-audio-3-{model_name} and click 'Agree and access repository'."
+            ) from e
+        raise e
 
     gen_time = time.time() - start_time
     speed = float(steps) / gen_time if gen_time > 0 else 0
+
+    # Clean up VRAM after generation
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # Save audio file
     output_dir = Path("outputs")
@@ -271,9 +296,9 @@ def create_app(model_mode: str = "all"):
                         model_name="medium",
                         default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
                         default_duration=15.0,
-                        max_duration=60.0,
+                        max_duration=180.0,
                         examples=medium_examples,
-                        note="💡 **Hardware Tip for 6GB VRAM GPUs:** Medium is a larger 1.4B parameter model. Durations between **10s and 30s** generate smoothly within 6GB VRAM with maximum speed.",
+                        note="💡 **Hardware Guide for Medium (1.4B):** On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **45–60s**. For longer clips, 12GB+ VRAM is recommended.",
                     )
                 with gr.Tab("ℹ️ System Diagnostics"):
                     gr.Markdown("### Workspace & Hardware Information")
@@ -315,9 +340,9 @@ def create_app(model_mode: str = "all"):
                 model_name="medium",
                 default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
                 default_duration=15.0,
-                max_duration=60.0,
+                max_duration=180.0,
                 examples=medium_examples,
-                note="💡 **Hardware Tip for 6GB VRAM GPUs:** Medium is a larger 1.4B parameter model. Durations between **10s and 30s** generate smoothly within 6GB VRAM.",
+                note="💡 **Hardware Guide for Medium (1.4B):** On 6GB GPUs (e.g. RTX 4050), stick to **10–30s**. On 8GB GPUs (e.g. RTX 5060), you can reach **45–60s**. For longer clips, 12GB+ VRAM is recommended.",
             )
         else:
             gr.Markdown(f"### 🎛️ Stable Audio 3 ({model_mode})")
