@@ -50,11 +50,14 @@ pixi run check-env
 ### 2. Generate Audio via CLI
 Generate high-fidelity stereo audio in seconds:
 ```bash
-# Music generation (default: small-music)
+# Music generation (small-music)
 pixi run generate --prompt "Upbeat funky bassline with warm rhodes piano and crisp drums" --duration 15
 
 # Sound effect generation (small-sfx)
 pixi run generate --model small-sfx --prompt "Campfire crackling in a dense forest with gentle wind" --duration 10
+
+# High-fidelity flagship music (medium - 1.4B parameters)
+pixi run generate --model medium --prompt "An epic cinematic orchestral trailer theme with soaring strings" --duration 15
 ```
 
 All generated `.wav` files are automatically timestamped and saved to the `outputs/` directory.
@@ -62,16 +65,19 @@ All generated `.wav` files are automatically timestamped and saved to the `outpu
 ### 3. Launch Interactive Web Studio
 Start the local Gradio studio in your web browser:
 ```bash
-# Default: Launches with switchable tabs (🎵 Music + 🔊 Sound Effects + ℹ️ Diagnostics)
+# Default: Launches with switchable tabs (🎵 Music + 🔊 Sound Effects + 🎛️ Medium + ℹ️ Diagnostics)
 pixi run ui
 
-# Single-model mode: Launch exclusively with the Music model
+# Single-model mode: Launch exclusively with a single model
 pixi run ui --model small-music
-
-# Single-model mode: Launch exclusively with the Sound Effects model
 pixi run ui --model small-sfx
+pixi run ui --model medium
 ```
-Open `http://127.0.0.1:7860` in your browser. By default, you get dedicated tabs for **Music** and **Sound Effects** with live waveforms, duration sliders, advanced settings, and inspiration presets.
+Open `http://127.0.0.1:7860` in your browser.
+
+> 💡 **Hardware Tip for 6GB VRAM GPUs (e.g. RTX 4050):**
+> * `small-music` & `small-sfx` use ~2.0 GB VRAM and can comfortably generate up to 120s.
+> * `medium` (1.4B) uses ~5.2 GB VRAM; generating between **10s and 30s** runs smoothly within 6GB VRAM limits.
 
 ---
 

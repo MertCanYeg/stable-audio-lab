@@ -140,6 +140,9 @@ def main():
     print(f"  Steps    : {args.steps}")
     print(f"  Seed     : {args.seed}")
 
+    if device == "cuda":
+        torch.cuda.empty_cache()
+
     gen_start = time.time()
     audio = model.generate(
         prompt=args.prompt,
@@ -150,6 +153,9 @@ def main():
         seed=args.seed,
     )
     gen_time = time.time() - gen_start
+
+    if device == "cuda":
+        torch.cuda.empty_cache()
 
     # Prepare output path
     output_dir = Path("outputs")

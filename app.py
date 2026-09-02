@@ -37,10 +37,24 @@ def load_model(model_name: str, use_half: bool = True):
     if model_name in _MODEL_CACHE:
         return _MODEL_CACHE[model_name]
 
+    # When switching to Medium on a 6GB GPU, evict smaller models to maximize VRAM headroom
+    if model_name == "medium" and torch.cuda.is_available():
+        _MODEL_CACHE.clear()
+        torch.cuda.empty_cache()
+
     from stable_audio_3 import StableAudioModel
 
     print(f"Loading '{model_name}' on {device.upper()} (fp16={half})...")
-    model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
+    try:
+        model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
+    except Exception as e:
+        if "401" in str(e) or "gated" in str(e).lower() or "restricted" in str(e).lower():
+            raise RuntimeError(
+                f"Cannot access model '{model_name}'. Please ensure you have accepted the license terms at "
+                f"https://huggingface.co/stabilityai/stable-audio-3-{model_name} and configured your HF_TOKEN."
+            ) from e
+        raise e
+
     _MODEL_CACHE[model_name] = model
     return model
 
@@ -60,6 +74,10 @@ def generate_audio(
         raise ValueError("Please enter a text prompt.")
 
     start_time = time.time()
+
+    # Empty cache before generation to maximize available VRAM
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     model = load_model(model_name)
 
@@ -91,14 +109,24 @@ def generate_audio(
 
     status_msg = (
         f"✅ Generated **{duration:.1f}s** in **{gen_time:.2f}s** "
-        f"({speed:.1f} steps/s) | Saved to `{out_path.name}`"
+        f"({speed:.1f} steps/s) | Model: `{model_name}` | Saved to `{out_path.name}`"
     )
     return str(out_path), status_msg
 
 
-def build_generation_tab(model_name: str, default_prompt: str, default_duration: float, examples: list):
+def build_generation_tab(
+    model_name: str,
+    default_prompt: str,
+    default_duration: float,
+    examples: list,
+    max_duration: float = 120.0,
+    note: str = None,
+):
     """Construct a clean, responsive generation interface for a specific model."""
     import gradio as gr
+
+    if note:
+        gr.Markdown(note)
 
     with gr.Row():
         with gr.Column(scale=5):
@@ -111,7 +139,7 @@ def build_generation_tab(model_name: str, default_prompt: str, default_duration:
             with gr.Row():
                 duration_slider = gr.Slider(
                     minimum=1.0,
-                    maximum=120.0,
+                    maximum=max_duration,
                     value=default_duration,
                     step=1.0,
                     label="Duration (seconds)",
@@ -191,6 +219,7 @@ def create_app(model_mode: str = "all"):
         ["Upbeat funky bassline with warm rhodes piano and crisp drums", 15.0],
         ["Dreamy cinematic ambient synth pad with shimmering reverb and tape warmth", 20.0],
         ["Smooth jazz trumpet solo over mellow acoustic drums and upright bass", 15.0],
+        ["TrackType: Music, traditional Turkish classical art music with Oud, Kanun, and Bendir", 20.0],
         ["Lofi hip hop drum groove with relaxing electric piano chords and vinyl crackle", 30.0],
     ]
 
@@ -200,6 +229,13 @@ def create_app(model_mode: str = "all"):
         ["TrackType: SFX, powerful sci-fi plasma rifle blaster shot with metallic dissipation", 3.0],
         ["TrackType: SFX, classic cartoon boing spring bounce sound effect, comedic and bouncy", 3.0],
         ["TrackType: SFX, heavy pneumatic spaceship airlock door depressurizing with a loud hiss", 6.0],
+    ]
+
+    medium_examples = [
+        ["An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings", 15.0],
+        ["A soulful 70s funk groove with live brass section, slap bass, and vintage electric piano", 20.0],
+        ["Dreamy synthwave anthem with pulsating analog arpeggios, nostalgic pads, and gated drums", 20.0],
+        ["A dark industrial cyberpunk bassline with distorted synthesizer stabs and heavy driving kick", 15.0],
     ]
 
     theme = gr.themes.Soft(
@@ -219,6 +255,7 @@ def create_app(model_mode: str = "all"):
                         model_name="small-music",
                         default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
                         default_duration=15.0,
+                        max_duration=120.0,
                         examples=music_examples,
                     )
                 with gr.Tab("🔊 Sound Effects (Small-SFX)"):
@@ -226,7 +263,17 @@ def create_app(model_mode: str = "all"):
                         model_name="small-sfx",
                         default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
                         default_duration=3.0,
+                        max_duration=30.0,
                         examples=sfx_examples,
+                    )
+                with gr.Tab("🎛️ Medium (1.4B Quality)"):
+                    build_generation_tab(
+                        model_name="medium",
+                        default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
+                        default_duration=15.0,
+                        max_duration=60.0,
+                        examples=medium_examples,
+                        note="💡 **Hardware Tip for 6GB VRAM GPUs:** Medium is a larger 1.4B parameter model. Durations between **10s and 30s** generate smoothly within 6GB VRAM with maximum speed.",
                     )
                 with gr.Tab("ℹ️ System Diagnostics"):
                     gr.Markdown("### Workspace & Hardware Information")
@@ -234,10 +281,15 @@ def create_app(model_mode: str = "all"):
 - **Active GPU**: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None (CPU)'}
 - **PyTorch Version**: `{torch.__version__}`
 - **CUDA Runtime**: `{torch.version.cuda if torch.cuda.is_available() else 'N/A'}`
-- **Models Available**:
-  - `small-music` (433M parameters, 44.1 kHz stereo composition)
-  - `small-sfx` (433M parameters, 44.1 kHz stereo foley & sound effects)
+- **Supported Models**:
+  - `small-music` (433M parameters, 44.1 kHz stereo composition, max 120s)
+  - `small-sfx` (433M parameters, 44.1 kHz stereo sound effects, max 120s)
+  - `medium` (1.4B parameters, production audio, max 380s)
 - **Audio Output Directory**: `outputs/`
+- **Hugging Face License Links**:
+  - [small-music](https://huggingface.co/stabilityai/stable-audio-3-small-music)
+  - [small-sfx](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)
+  - [medium](https://huggingface.co/stabilityai/stable-audio-3-medium)
                     """)
         elif model_mode == "small-sfx":
             gr.Markdown("### 🔊 Stable Audio 3 Small (Sound Effects)")
@@ -245,6 +297,7 @@ def create_app(model_mode: str = "all"):
                 model_name="small-sfx",
                 default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
                 default_duration=3.0,
+                max_duration=30.0,
                 examples=sfx_examples,
             )
         elif model_mode == "small-music":
@@ -253,7 +306,18 @@ def create_app(model_mode: str = "all"):
                 model_name="small-music",
                 default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
                 default_duration=15.0,
+                max_duration=120.0,
                 examples=music_examples,
+            )
+        elif model_mode == "medium":
+            gr.Markdown("### 🎛️ Stable Audio 3 Medium (1.4B)")
+            build_generation_tab(
+                model_name="medium",
+                default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
+                default_duration=15.0,
+                max_duration=60.0,
+                examples=medium_examples,
+                note="💡 **Hardware Tip for 6GB VRAM GPUs:** Medium is a larger 1.4B parameter model. Durations between **10s and 30s** generate smoothly within 6GB VRAM.",
             )
         else:
             gr.Markdown(f"### 🎛️ Stable Audio 3 ({model_mode})")
@@ -261,6 +325,7 @@ def create_app(model_mode: str = "all"):
                 model_name=model_mode,
                 default_prompt="Upbeat lo-fi beat",
                 default_duration=15.0,
+                max_duration=60.0,
                 examples=music_examples,
             )
 
@@ -278,7 +343,7 @@ def main():
         type=str,
         default="all",
         choices=["all", "small-music", "small-sfx", "medium"],
-        help="Launch with all switchable model tabs ('all'), or specify a single model ('small-music', 'small-sfx')",
+        help="Launch with all switchable model tabs ('all'), or specify a single model ('small-music', 'small-sfx', 'medium')",
     )
     parser.add_argument(
         "--port",
