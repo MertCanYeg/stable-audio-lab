@@ -51,10 +51,10 @@ pixi run check-env
 Generate high-fidelity stereo audio in seconds:
 ```bash
 # Music generation (default: small-music)
-pixi run generate -- --prompt "Upbeat funky bassline with warm rhodes piano and crisp drums" --duration 15
+pixi run generate --prompt "Upbeat funky bassline with warm rhodes piano and crisp drums" --duration 15
 
 # Sound effect generation (small-sfx)
-pixi run generate -- --model small-sfx --prompt "Campfire crackling in a dense forest with gentle wind" --duration 10
+pixi run generate --model small-sfx --prompt "Campfire crackling in a dense forest with gentle wind" --duration 10
 ```
 
 All generated `.wav` files are automatically timestamped and saved to the `outputs/` directory.
@@ -68,7 +68,7 @@ Open `http://127.0.0.1:7860` to tweak prompts, duration, sampling steps, and lis
 
 To load the sound effects model in the UI:
 ```bash
-pixi run ui -- --model small-sfx
+pixi run ui --model small-sfx
 ```
 
 ---
