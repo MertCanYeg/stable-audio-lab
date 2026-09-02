@@ -2,7 +2,7 @@
 authors = ["MertCanYeg <61737235+MertCanYeg@users.noreply.github.com>"]
 channels = ["conda-forge"]
 name = "stable-audio-lab"
-platforms = ["win-64"]
+platforms = [{ platform = "win-64", cuda = "13.2" }]
 version = "0.1.0"
 
 [tasks]
@@ -14,12 +14,17 @@ ui = "python app.py"
 python = "3.12.*"
 
 [pypi-options]
-extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
+extra-index-urls = ["https://download.pytorch.org/whl/cu132"]
 index-strategy = "unsafe-best-match"
 
+[pypi-options.dependency-overrides]
+torch = "==2.13.0"
+torchaudio = ">=2.7.1"
+
 [pypi-dependencies]
-torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" }
-torchaudio = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" }
+torch = { version = "==2.13.0", index = "https://download.pytorch.org/whl/cu132" }
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu132" }
+torchaudio = ">=2.7.1"
 soundfile = ">=0.13.1"
 gradio = ">=5.0"
 huggingface-hub = ">=0.28.0"
