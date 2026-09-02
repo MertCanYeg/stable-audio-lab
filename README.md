@@ -59,17 +59,19 @@ pixi run generate --model small-sfx --prompt "Campfire crackling in a dense fore
 
 All generated `.wav` files are automatically timestamped and saved to the `outputs/` directory.
 
-### 3. Launch Interactive Web UI
-Start the local Gradio interface in your web browser:
+### 3. Launch Interactive Web Studio
+Start the local Gradio studio in your web browser:
 ```bash
+# Default: Launches with switchable tabs (🎵 Music + 🔊 Sound Effects + ℹ️ Diagnostics)
 pixi run ui
-```
-Open `http://127.0.0.1:7860` to tweak prompts, duration, sampling steps, and listen to generated tracks with visual spectrograms.
 
-To load the sound effects model in the UI:
-```bash
+# Single-model mode: Launch exclusively with the Music model
+pixi run ui --model small-music
+
+# Single-model mode: Launch exclusively with the Sound Effects model
 pixi run ui --model small-sfx
 ```
+Open `http://127.0.0.1:7860` in your browser. By default, you get dedicated tabs for **Music** and **Sound Effects** with live waveforms, duration sliders, advanced settings, and inspiration presets.
 
 ---
 
