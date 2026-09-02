@@ -6,5 +6,22 @@ platforms = ["win-64"]
 version = "0.1.0"
 
 [tasks]
+check-env = "python check_env.py"
+generate = "python generate.py"
+ui = "python app.py"
 
 [dependencies]
+python = "3.12.*"
+
+[pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
+index-strategy = "unsafe-best-match"
+
+[pypi-dependencies]
+torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" }
+torchaudio = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" }
+soundfile = ">=0.13.1"
+gradio = ">=5.0"
+huggingface-hub = ">=0.28.0"
+python-dotenv = ">=1.0.0"
+stable-audio-3 = { git = "https://github.com/Stability-AI/stable-audio-3.git" }
