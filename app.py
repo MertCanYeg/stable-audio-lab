@@ -4,10 +4,30 @@
 import argparse
 import os
 import sys
+import numpy as np
 from dotenv import load_dotenv
 
 # Load .env file
 load_dotenv()
+
+
+def patch_torchaudio_save():
+    """Ensure torchaudio.save uses soundfile reliably without torchcodec errors."""
+    import torch
+    import torchaudio
+    import soundfile as sf
+
+    def _safe_torchaudio_save(uri, src, sample_rate, *args, **kwargs):
+        if isinstance(src, torch.Tensor):
+            data = src.detach().cpu().numpy()
+        else:
+            data = np.asarray(src)
+        # If shape is [channels, samples], transpose to [samples, channels]
+        if data.ndim == 2 and data.shape[0] in (1, 2) and data.shape[1] > data.shape[0]:
+            data = data.T
+        sf.write(str(uri), data, sample_rate)
+
+    torchaudio.save = _safe_torchaudio_save
 
 
 def main():
@@ -63,6 +83,9 @@ def main():
             print("=" * 65)
     except Exception:
         pass
+
+    # Apply safe audio saving patch
+    patch_torchaudio_save()
 
     import torch
     from stable_audio_3 import StableAudioModel

@@ -25,6 +25,8 @@ torchaudio = ">=2.7.1"
 torch = { version = "==2.13.0", index = "https://download.pytorch.org/whl/cu132" }
 torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu132" }
 torchaudio = ">=2.7.1"
+matplotlib = ">=3.8.0"
+accelerate = ">=0.28.0"
 soundfile = ">=0.13.1"
 gradio = ">=5.0"
 huggingface-hub = ">=0.28.0"
