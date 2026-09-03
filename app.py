@@ -12,7 +12,7 @@ import gradio as gr
 import torch
 
 from core.compat import init_platform_compat, get_device_banner
-from core.engine import generate_audio
+from core.engine import generate_audio_stream
 from core.registry import MODELS, ModelSpec, get_model_spec
 from core.storage import check_model_cache, download_model
 
@@ -40,7 +40,7 @@ def build_generation_tab(spec: ModelSpec):
             visible=not is_ready,
         )
 
-    def on_tab_download(progress=gr.Progress(track_tqdm=True)):
+    def on_tab_download(progress=gr.Progress(track_tqdm=False)):
         def cb(pct, desc):
             progress(pct, desc=desc)
 
@@ -142,8 +142,8 @@ def build_generation_tab(spec: ModelSpec):
                 label="Presets",
             )
 
-    def on_generate(p, np_prompt, dur, st, cfg, sd, progress=gr.Progress(track_tqdm=True)):
-        out_file, status = generate_audio(
+    def on_generate(p, np_prompt, dur, st, cfg, sd, progress=gr.Progress(track_tqdm=False)):
+        for out_file, status in generate_audio_stream(
             model_name=spec.name,
             prompt=p,
             negative_prompt=np_prompt,
@@ -152,8 +152,8 @@ def build_generation_tab(spec: ModelSpec):
             cfg_scale=cfg,
             seed=sd,
             progress=progress,
-        )
-        return out_file, status
+        ):
+            yield out_file, status
 
     generate_btn.click(
         fn=on_generate,
@@ -166,6 +166,7 @@ def build_generation_tab(spec: ModelSpec):
             seed_input,
         ],
         outputs=[audio_output, status_output],
+        show_progress="minimal",
         concurrency_id="gpu_worker",
         concurrency_limit=1,
     )

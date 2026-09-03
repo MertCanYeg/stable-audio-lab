@@ -5,7 +5,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 import soundfile as sf
 import torch
@@ -43,17 +43,20 @@ def load_model(model_name: str, use_half: bool = True, progress=None):
         _MODEL_CACHE.clear()
         torch.cuda.empty_cache()
 
+    spec = get_model_spec(model_name)
+    approx_size = spec.approx_size.split(" ")[0] if spec.approx_size else "weights"
+
     # Verify model files are 100% complete and healthy before loading
     if progress:
-        progress(0.05, desc=f"[1/4] Verifying '{model_name}' weights on disk...")
-    print(f"📦 [1/4] Verifying '{model_name}' weights on disk...")
+        progress(0.05, desc=f"Verifying '{model_name}' weights on disk...")
+    print(f"📦 Verifying '{model_name}' weights on disk...")
     ensure_model_ready(model_name)
 
     from stable_audio_3 import StableAudioModel
 
     if progress:
-        progress(0.15, desc=f"[2/4] Loading '{model_name}' weights into {device.upper()} (fp16={half})...")
-    print(f"⚡ [2/4] Loading '{model_name}' on {device.upper()} (fp16={half})...")
+        progress(0.12, desc=f"Loading '{model_name}' weights into {device.upper()} ({approx_size})...")
+    print(f"⚡ Loading '{model_name}' on {device.upper()} (fp16={half}, size={approx_size})...")
     load_start = time.time()
     try:
         model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
@@ -64,7 +67,6 @@ def load_model(model_name: str, use_half: bool = True, progress=None):
             download_model(model_name, force=True)
             model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
         elif "401" in str(e) or "gated" in str(e).lower() or "restricted" in str(e).lower():
-            spec = get_model_spec(model_name)
             raise RuntimeError(
                 f"Cannot access model '{model_name}'. Please ensure you have accepted the license terms at "
                 f"https://huggingface.co/{spec.repo_id} and configured your HF_TOKEN in .env."
@@ -78,7 +80,7 @@ def load_model(model_name: str, use_half: bool = True, progress=None):
     return model
 
 
-def generate_audio(
+def generate_audio_stream(
     model_name: str,
     prompt: str,
     negative_prompt: Optional[str] = None,
@@ -88,20 +90,25 @@ def generate_audio(
     seed: int = -1,
     output_path: Optional[str] = None,
     progress=None,
-) -> Tuple[str, str]:
-    """Generate audio from a text prompt with real-time stage & step reporting.
+) -> Iterator[Tuple[Optional[str], str]]:
+    """Stream real-time stage status and final audio filepath from text prompt.
 
-    Returns:
-        Tuple of (output_filepath_str, status_message_str)
+    Yields:
+        (None, stage_markdown) during preparation and sampling,
+        (output_filepath_str, completion_markdown) when complete.
     """
     if not prompt or not prompt.strip():
         raise ValueError("Please enter a text prompt.")
+
+    spec = get_model_spec(model_name)
+    approx_size = spec.approx_size.split(" ")[0] if spec.approx_size else "weights"
 
     # Serialize GPU access so concurrent tabs never collide or thrash VRAM
     was_locked = not _GPU_INFERENCE_LOCK.acquire(blocking=False)
     if was_locked:
         if progress:
-            progress(0.01, desc=f"⏳ Waiting in queue for active generation to finish...")
+            progress(0.01, desc="Waiting in queue for active generation to finish...")
+        yield None, "⏳ **Waiting in queue for active generation to finish...**"
         print(f"\n⏳ [GPU Queue] '{model_name}' queued — waiting for active generation to finish...")
         _GPU_INFERENCE_LOCK.acquire(blocking=True)
 
@@ -119,26 +126,31 @@ def generate_audio(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        if model_name not in _MODEL_CACHE:
+            yield None, f"⏳ **Loading '{model_name}' weights into VRAM ({approx_size})...** *(first load takes ~10–15s)*"
+
         model = load_model(model_name, progress=progress)
 
         seed_val = int(seed) if seed is not None and seed != -1 else -1
         max_sample_size = model.model_config.get("sample_size", 5292032)
 
-        # Stage 3: Prompt Conditioning
+        # Stage 2: Prompt Conditioning
         if progress:
-            progress(0.25, desc=f"[3/4] Encoding prompt conditioning with T5...")
-        print(f"🔤 [3/4] Encoding prompt conditioning with T5...")
+            progress(0.20, desc="Encoding prompt conditioning with T5...")
+        yield None, "⏳ **Encoding text prompt conditioning with T5...**"
+        print(f"🔤 Encoding prompt conditioning with T5...")
 
-        # Stage 4: Diffusion Sampling with granular per-step callback
-        print(f"🌊 [4/4] Running diffusion sampling ({steps} steps)...")
+        # Stage 3: Diffusion Sampling
+        print(f"🌊 Running diffusion sampling ({steps} steps)...")
         if progress:
-            progress(0.30, desc=f"[4/4] Starting diffusion sampling ({steps} steps)...")
+            progress(0.28, desc=f"Diffusion sampling: step 1/{steps} (0%)...")
+        yield None, f"⏳ **Diffusion sampling: step 1/{steps} (0%)...**"
 
         def sampling_callback(info: dict):
             step_idx = info.get("i", 0)
             curr_step = step_idx + 1
-            pct = 0.30 + 0.60 * (curr_step / steps)
-            step_desc = f"[4/4] Sampling audio: step {curr_step}/{steps} ({int((curr_step/steps)*100)}%)"
+            pct = 0.28 + 0.64 * (curr_step / steps)
+            step_desc = f"Diffusion sampling: step {curr_step}/{steps} ({int((curr_step/steps)*100)}%)"
             print(f"   -> Diffusion step {curr_step}/{steps} completed")
             if progress:
                 progress(pct, desc=step_desc)
@@ -162,10 +174,11 @@ def generate_audio(
                 f"Tip: Try reducing duration or switch to 'small-music' (~2GB VRAM)."
             ) from e
 
-        # Stage 5: Audio Decoding and Export
+        # Stage 4: Audio Decoding and Export
         if progress:
-            progress(0.92, desc=f"[✓] Decoding audio latents and saving .wav...")
-        print(f"💾 [✓] Decoding audio latents and saving .wav...")
+            progress(0.95, desc="Decoding audio latents and saving .wav...")
+        yield None, "⏳ **Decoding audio latents and saving .wav...**"
+        print(f"💾 Decoding audio latents and saving .wav...")
 
         gen_time = time.time() - start_time
         speed = float(steps) / gen_time if gen_time > 0 else 0
@@ -201,6 +214,16 @@ def generate_audio(
         print(f"   File saved to: {out_file.resolve()}")
         print("=" * 60 + "\n")
 
-        return str(out_file), status_msg
+        yield str(out_file), status_msg
     finally:
         _GPU_INFERENCE_LOCK.release()
+
+
+def generate_audio(*args, **kwargs) -> Tuple[str, str]:
+    """Non-streaming wrapper around generate_audio_stream for CLI and scripts."""
+    final_file, final_status = None, ""
+    for out_file, status in generate_audio_stream(*args, **kwargs):
+        if out_file:
+            final_file = out_file
+        final_status = status
+    return final_file or "", final_status
