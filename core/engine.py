@@ -265,10 +265,14 @@ def generate_audio(
         _emit_log(encode_msg, status_callback)
 
         pbar = None
-        sample_start = time.time()
+        first_step_time: float | None = None
+        diffusion_start: float | None = None
+        diffusion_elapsed: float = 0.0
+        diffusion_end: float | None = None
 
         def _on_step(info: dict):
-            nonlocal pbar
+            nonlocal pbar, first_step_time, diffusion_start, diffusion_elapsed, diffusion_end
+            now = time.time()
             current = info.get("i", 0) + 1
 
             # Live terminal progress bar (displayed for both UI and CLI runs)
@@ -278,23 +282,41 @@ def generate_audio(
             pbar.refresh()
             if current >= total_steps:
                 pbar.close()
+                diffusion_end = now
 
             # External caller callback (if provided)
             if step_callback:
                 step_callback(current, total_steps)
 
+            # Measure step timing isolated from prior text encoding
+            if first_step_time is None:
+                first_step_time = now
+                speed_str = ""
+            else:
+                if diffusion_start is None:
+                    # Estimate step 1 duration from step 2 duration (homogeneous DiT steps)
+                    step_duration = now - first_step_time
+                    diffusion_start = first_step_time - step_duration
+                elapsed = now - diffusion_start
+                speed = current / elapsed if elapsed > 0 else 0.0
+                eta = max(0.0, (total_steps - current) / speed) if speed > 0 else 0.0
+                speed_str = f"{speed:.1f} st/s (ETA: {eta:.0f}s)"
+
+            if current >= total_steps:
+                if diffusion_start is not None:
+                    diffusion_elapsed = now - diffusion_start
+                elif first_step_time is not None:
+                    diffusion_elapsed = max(0.01, now - first_step_time)
+
             # Live UI status & sampling progress bar callback (compact 12-char bar)
             if status_callback:
-                elapsed = time.time() - sample_start
-                speed = current / elapsed if elapsed > 0 else 0.0
-                eta = (total_steps - current) / speed if speed > 0 else 0.0
                 pct = int((current / total_steps) * 100)
                 bar_len = 12
                 filled = int(bar_len * current / total_steps)
                 bar = "█" * filled + "░" * (bar_len - filled)
+                status_suffix = f" {speed_str}" if speed_str else ""
                 status_callback(
-                    f"[sampling] Step {current}/{total_steps} ({pct}%) [{bar}] "
-                    f"{speed:.1f} st/s (ETA: {eta:.0f}s)"
+                    f"[sampling] Step {current}/{total_steps} ({pct}%) [{bar}]{status_suffix}"
                 )
 
             # Gradio progress tracking
@@ -314,10 +336,16 @@ def generate_audio(
             callback=_on_step,
             disable_tqdm=True,
         )
-        sample_elapsed = time.time() - sample_start
+
+        if diffusion_elapsed <= 0.0 and diffusion_start is not None and diffusion_end is not None:
+            diffusion_elapsed = max(0.01, diffusion_end - diffusion_start)
+        elif diffusion_elapsed <= 0.0:
+            diffusion_elapsed = max(0.01, time.time() - start_time - load_elapsed)
+
+        sample_speed = total_steps / diffusion_elapsed if diffusion_elapsed > 0 else 0.0
         sample_done_msg = (
-            f"[generate] Sampling completed in {sample_elapsed:.2f}s "
-            f"({total_steps / sample_elapsed:.1f} steps/s)"
+            f"[generate] Sampling completed in {diffusion_elapsed:.2f}s "
+            f"({sample_speed:.1f} steps/s)"
         )
         print()
         _emit_log(sample_done_msg, status_callback)
@@ -343,7 +371,12 @@ def generate_audio(
         audio_tensor = audio[0].detach().cpu().clamp(-1.0, 1.0)
         audio_np = audio_tensor.numpy().T
         sf.write(str(out_file), audio_np, sample_rate, subtype="PCM_16")
-        decode_elapsed = time.time() - decode_start
+
+        # Total decode time: VAE latent decoding inside model.generate + disk write
+        if diffusion_end is not None:
+            decode_elapsed = time.time() - diffusion_end
+        else:
+            decode_elapsed = time.time() - decode_start
 
         file_size = out_file.stat().st_size
         channels = audio_np.shape[1] if audio_np.ndim > 1 else 1
@@ -370,7 +403,7 @@ def generate_audio(
             _emit_log(f"[generate] {_gpu_mem_summary()}", status_callback)
         _emit_log(
             f"[generate] Total: {total_elapsed:.2f}s "
-            f"(load={load_elapsed:.1f}s, sample={sample_elapsed:.1f}s, decode={decode_elapsed:.1f}s)",
+            f"(load={load_elapsed:.1f}s, sample={diffusion_elapsed:.1f}s, decode={decode_elapsed:.1f}s)",
             status_callback,
         )
         print(f"{'=' * 60}\n")
