@@ -97,10 +97,12 @@ def download_model(
 
     total_files = len(spec.files)
     for idx, (filename, min_mb) in enumerate(spec.files):
+        pct = idx / total_files
+        desc = f"Downloading {filename} [{idx+1}/{total_files}]..."
         if progress_callback:
-            progress_callback((idx / total_files), f"Fetching {filename} for {model_name}...")
+            progress_callback(pct, desc)
 
-        print(f"  -> Downloading {filename}...")
+        print(f"  [{idx+1}/{total_files}] Downloading {filename}...")
         try:
             downloaded_path = hf_hub_download(
                 repo_id=spec.repo_id,
@@ -109,7 +111,7 @@ def download_model(
             )
             if filename.endswith(".safetensors"):
                 if not verify_safetensors(downloaded_path, min_size_mb=min_mb):
-                    print(f"  ⚠️ Integrity check failed for {filename}. Removing bad file and retrying...")
+                    print(f"  ⚠️ Checksum verification failed for {filename}. Re-downloading fresh file...")
                     try:
                         os.remove(downloaded_path)
                     except Exception:
@@ -129,7 +131,7 @@ def download_model(
     elapsed = time.time() - start_time
     new_status = check_model_cache(model_name)
     if progress_callback:
-        progress_callback(1.0, f"Ready ({new_status['size_gb']:.2f} GB)")
+        progress_callback(1.0, f"✅ Verified & Ready ({new_status['size_gb']:.2f} GB)")
 
     print(f"  ✅ [{model_name}] Verified and ready in {elapsed:.1f}s ({new_status['size_gb']:.2f} GB on disk).")
     return True

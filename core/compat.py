@@ -23,6 +23,16 @@ def init_platform_compat():
         except Exception:
             pass
 
+    # Windows stdout UTF-8 encoding: prevent charmap/cp1254 UnicodeEncodeError on emojis
+    if sys.platform == "win32":
+        try:
+            if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     # Windows asyncio: silence harmless TCP connection reset (WinError 10054)
     # when web browsers finish downloading audio streams or refresh SSE sockets
     if sys.platform == "win32":

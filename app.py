@@ -41,8 +41,11 @@ def build_generation_tab(spec: ModelSpec):
         )
 
     def on_tab_download(progress=gr.Progress(track_tqdm=True)):
-        progress(0.05, desc=f"Connecting to Hugging Face Hub for {spec.name}...")
-        success = download_model(spec.name)
+        def cb(pct, desc):
+            progress(pct, desc=desc)
+
+        print(f"\n📥 [UI Action] Starting download for '{spec.name}'...")
+        success = download_model(spec.name, progress_callback=cb)
         new_st = check_model_cache(spec.name)
         if success and new_st["downloaded"]:
             gr.Info(f"Model '{spec.name}' downloaded and verified successfully!")
