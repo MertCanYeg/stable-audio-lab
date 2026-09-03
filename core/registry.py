@@ -1,41 +1,33 @@
-"""Model registry and single source of truth for Stable Audio Lab models."""
+"""Model specifications, durations, and curated prompt examples for Stable Audio Lab."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple, Union
+
+from core.exceptions import ModelNotFoundError
 
 
 @dataclass(frozen=True)
 class ModelSpec:
+    """Specification and curated metadata for a Stable Audio 3 model variant."""
+
     name: str
     repo_id: str
-    display_name: str
-    parameters: str
-    approx_size: str
+    default_prompt: str
     default_duration: float
     max_duration: float
-    default_prompt: str
-    description: str
-    note: str = ""
-    files: Tuple[Tuple[str, float], ...] = (
-        ("model_config.json", 0.0),
-        ("model.safetensors", 50.0),
-        ("t5gemma-b-b-ul2/model.safetensors", 10.0),
-    )
-    examples: Union[List[List[Any]], Dict[str, List[List[Any]]]] = field(default_factory=list)
+    description: str = ""
+    examples: list[list[str | float]] = field(default_factory=list)
 
 
-MODELS: Dict[str, ModelSpec] = {
+MODELS: dict[str, ModelSpec] = {
     "small-music": ModelSpec(
         name="small-music",
         repo_id="stabilityai/stable-audio-3-small-music",
-        display_name="🎵 Music (Small-Music)",
-        parameters="433M",
-        approx_size="~1.5 GB (~3.2 GB with T5)",
+        default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
         default_duration=15.0,
         max_duration=120.0,
-        default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
-        description="Fast, lightweight music composition model trained for full stereo musical tracks.",
-        note="⚡ High-speed stereo music synthesis (up to 120s).",
+        description="Stereo music generation (433M parameters, up to 120s).",
         examples=[
             ["Upbeat funky bassline with warm rhodes piano and crisp drums", 15.0],
             ["2000s alternative rock with heavy drop-tuned guitars, driving drums, and angsty melodic chorus", 30.0],
@@ -54,16 +46,12 @@ MODELS: Dict[str, ModelSpec] = {
     "small-sfx": ModelSpec(
         name="small-sfx",
         repo_id="stabilityai/stable-audio-3-small-sfx",
-        display_name="🔊 Sound Effects (Small-SFX)",
-        parameters="433M",
-        approx_size="~1.5 GB (~3.2 GB with T5)",
+        default_prompt="TrackType: SFX, funny rubber clown nose squeak honk sound with double squeeze",
         default_duration=5.0,
         max_duration=120.0,
-        default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
-        description="Specialized sound effects, foley, and environmental soundscape generator.",
-        note="⚡ High-speed Foley & sound effects (up to 120s). *Tip: Prefix prompts with `TrackType: SFX`.*",
+        description="Sound effects and foley (433M parameters, up to 120s).",
         examples=[
-            ["TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze", 3.0],
+            ["TrackType: SFX, funny rubber clown nose squeak honk sound with double squeeze", 3.0],
             ["TrackType: SFX, deep campfire crackling and popping in a dense pine forest with gentle whistling night wind", 15.0],
             ["TrackType: SFX, powerful sci-fi plasma rifle blaster shot with metallic electrical dissipation", 3.0],
             ["TrackType: SFX, heavy thunderstorm with torrential rain pouring against a window and distant rolling thunder", 30.0],
@@ -80,43 +68,35 @@ MODELS: Dict[str, ModelSpec] = {
     "medium": ModelSpec(
         name="medium",
         repo_id="stabilityai/stable-audio-3-medium",
-        display_name="🎛️ Medium (1.4B Quality)",
-        parameters="1.4B",
-        approx_size="~8.6 GB (~9.7 GB with T5)",
+        default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
         default_duration=15.0,
         max_duration=380.0,
-        default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
-        description="Unified 1.4B flagship model capable of full production music and blockbuster sound effects up to 380 seconds.",
-        note="🎛️ Flagship 1.4B model for production audio & cinematic sound design (up to 380s / ~6.3 mins).",
-        examples={
-            "🎵 Music & Cinematic": [
-                ["Massive cinematic sci-fi orchestral trailer theme with thundering timpani, colossal brass swells, and soaring strings", 30.0],
-                ["Ancient Nordic Viking folk music with resonant tagelharpa, bowed lyre, hypnotic shamanic frame drum, and deep vocal drone", 35.0],
-                ["80s retro synthwave outrun anthem with driving analog arpeggios, punchy gated reverb snare, and soaring guitar lead", 30.0],
-                ["Dark cyberpunk neo-noir soundtrack with solitary melancholic muted trumpet, deep sub-bass drone, and rainy neon city pads", 30.0],
-                ["Soulful 70s Motown funk with live brass section, warm Hammond B3 organ, rhythmic wah-wah guitar, and melodic bass", 30.0],
-                ["Epic fantasy highland soundtrack with evocative Celtic uilleann pipes, tin whistle, sweeping orchestral strings, and bodhrán", 35.0],
-                ["Melodic organic deep house with subtle marimba plucks, smooth round sub-bass, crisp shakers, and lush sunset beach reverb", 30.0],
-                ["Late night smoky noir jazz ballad with expressive tenor saxophone, brushed snare, and warm upright double bass", 30.0],
-                ["Deep space ambient meditation soundscape with evolving granular shimmer pads, zero-gravity drone, and ethereal harmonic resonances", 45.0],
-                ["Alternative 2000s post-grunge hard rock anthem with wall-of-sound distorted guitars, punchy arena drums, and soaring melody", 30.0],
-            ],
-            "🔊 Sound Effects & Foley": [
-                ["TrackType: SFX, colossal cinematic explosion with deep sub-bass shockwave, flying debris, and reverberant metallic tail", 6.0],
-                ["TrackType: SFX, thunderstorm inside a dense tropical rainforest with raindrops hitting large leaves and distant rolling thunder", 30.0],
-                ["TrackType: SFX, massive robotic mech powering up with mechanical servo whines, hydraulic hiss, and heavy metallic footsteps", 8.0],
-                ["TrackType: SFX, ominous mythical monster roar echoing inside a cavernous underground cave with terrifying guttural growl", 6.0],
-                ["TrackType: SFX, futuristic hovercar soaring past at high speed with a Doppler pitch shift and turbo jet exhaust whine", 5.0],
-                ["TrackType: SFX, medieval castle siege with flaming catapult boulders launching, wooden wheels creaking, and ambient battle chaos", 15.0],
-            ],
-        },
+        description="Flagship quality model for music and sound design (1.4B parameters, up to 380s).",
+        examples=[
+            ["Massive cinematic sci-fi orchestral trailer theme with thundering timpani, colossal brass swells, and soaring strings", 30.0],
+            ["Ancient Nordic Viking folk music with resonant tagelharpa, bowed lyre, hypnotic frame drum, and vocal drone", 35.0],
+            ["80s retro synthwave outrun anthem with driving analog arpeggios, punchy gated reverb snare, and soaring guitar lead", 30.0],
+            ["Dark cyberpunk neo-noir soundtrack with solitary melancholic muted trumpet and deep sub-bass drone", 30.0],
+            ["Soulful 70s Motown funk with live brass section, warm Hammond B3 organ, and melodic bass", 30.0],
+            ["Epic fantasy highland soundtrack with Celtic uilleann pipes, tin whistle, sweeping orchestral strings, and bodhran", 35.0],
+            ["Melodic organic deep house with subtle marimba plucks, smooth round sub-bass, crisp shakers, and sunset beach reverb", 30.0],
+            ["Late night smoky noir jazz ballad with expressive tenor saxophone, brushed snare, and upright double bass", 30.0],
+            ["Deep space ambient meditation soundscape with evolving granular shimmer pads, zero-gravity drone, and harmonic resonances", 45.0],
+            ["Alternative 2000s post-grunge hard rock anthem with wall-of-sound distorted guitars, arena drums, and soaring melody", 30.0],
+            ["TrackType: SFX, colossal cinematic explosion with deep sub-bass shockwave and reverberant tail", 6.0],
+            ["TrackType: SFX, thunderstorm inside a dense tropical rainforest with raindrops hitting large leaves and distant thunder", 30.0],
+            ["TrackType: SFX, massive robotic mech powering up with mechanical servo whines and hydraulic hiss", 8.0],
+            ["TrackType: SFX, ominous mythical monster roar echoing inside a cavernous cave with terrifying guttural growl", 6.0],
+            ["TrackType: SFX, futuristic hovercar soaring past at high speed with Doppler pitch shift and turbo jet exhaust whine", 5.0],
+            ["TrackType: SFX, medieval castle siege with flaming catapult boulders launching, wooden wheels creaking, and battle ambience", 15.0],
+        ],
     ),
 }
 
 
 def get_model_spec(model_name: str) -> ModelSpec:
-    """Retrieve ModelSpec by name, raising a clear ValueError if not registered."""
+    """Retrieve ModelSpec by name, raising ModelNotFoundError if unrecognized."""
     if model_name not in MODELS:
-        valid = list(MODELS.keys())
-        raise ValueError(f"Unknown model '{model_name}'. Valid choices: {valid}")
+        valid = ", ".join(repr(k) for k in MODELS.keys())
+        raise ModelNotFoundError(f"Unknown model '{model_name}'. Valid choices: {valid}")
     return MODELS[model_name]
