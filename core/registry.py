@@ -35,7 +35,7 @@ MODELS: Dict[str, ModelSpec] = {
         max_duration=120.0,
         default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
         description="Fast, lightweight music composition model trained for full stereo musical tracks.",
-        note="💡 **Music Model:** Fast generation (~2s for 15s audio on modern GPUs). Maximum duration: 120s.",
+        note="⚡ High-speed stereo music synthesis (up to 120s).",
         examples=[
             ["Upbeat funky bassline with warm rhodes piano and crisp drums", 15.0],
             ["2000s alternative rock with heavy drop-tuned guitars, driving drums, and angsty melodic chorus", 30.0],
@@ -61,7 +61,7 @@ MODELS: Dict[str, ModelSpec] = {
         max_duration=120.0,
         default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
         description="Specialized sound effects, foley, and environmental soundscape generator.",
-        note="💡 **SFX Model:** Optimized for Foley, impacts, and environmental soundscapes. Start prompts with `TrackType: SFX` for best results.",
+        note="⚡ High-speed Foley & sound effects (up to 120s). *Tip: Prefix prompts with `TrackType: SFX`.*",
         examples=[
             ["TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze", 3.0],
             ["TrackType: SFX, deep campfire crackling and popping in a dense pine forest with gentle whistling night wind", 15.0],
@@ -87,7 +87,7 @@ MODELS: Dict[str, ModelSpec] = {
         max_duration=380.0,
         default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
         description="Unified 1.4B flagship model capable of full production music and blockbuster sound effects up to 380 seconds.",
-        note="💡 **Flagship Model:** Stable Audio 3 Medium (1.4B) trained up to **380s (~6.3 mins)**. High fidelity for both music and cinematic sound design.",
+        note="🎛️ Flagship 1.4B model for production audio & cinematic sound design (up to 380s / ~6.3 mins).",
         examples={
             "🎵 Music & Cinematic": [
                 ["Massive cinematic sci-fi orchestral trailer theme with thundering timpani, colossal brass swells, and soaring strings", 30.0],

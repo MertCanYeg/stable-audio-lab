@@ -25,47 +25,37 @@ def build_generation_tab(spec: ModelSpec):
     init_status = check_model_cache(spec.name)
     is_ready = init_status["downloaded"]
 
-    if spec.note:
-        gr.Markdown(spec.note)
-
-    # In-tab Model Status and Download Manager
+    # Model status & quick-download action bar
     with gr.Row(variant="panel"):
-        with gr.Column(scale=8):
-            status_badge = gr.Markdown(
-                f"🟢 **Model Status:** Ready on disk ({init_status['size_gb']:.2f} GB) — fast instant generation."
-                if is_ready
-                else f"🟠 **Model Status:** Not downloaded yet ({init_status['status_text']}). You can pre-download weights now or click Generate to auto-download."
-            )
-        with gr.Column(scale=4, min_width=220):
-            dl_btn = gr.Button(
-                f"📥 Download {spec.name} Weights",
-                variant="secondary",
-                size="sm",
-                visible=not is_ready,
-            )
-
-    dl_notice = gr.Markdown("", visible=False)
+        status_badge = gr.Markdown(
+            f"🟢 **Installed** ({init_status['size_gb']:.2f} GB) • {spec.note}"
+            if is_ready
+            else f"🟠 **Weights not downloaded** ({spec.approx_size} required) • Click **Download Weights** or **Generate Audio** to fetch."
+        )
+        dl_btn = gr.Button(
+            "📥 Download Weights",
+            variant="secondary",
+            size="sm",
+            scale=0,
+            visible=not is_ready,
+        )
 
     def on_tab_download(progress=gr.Progress(track_tqdm=True)):
         progress(0.05, desc=f"Connecting to Hugging Face Hub for {spec.name}...")
         success = download_model(spec.name)
         new_st = check_model_cache(spec.name)
         if success and new_st["downloaded"]:
+            gr.Info(f"Model '{spec.name}' downloaded and verified successfully!")
             return (
-                f"🟢 **Model Status:** Ready on disk ({new_st['size_gb']:.2f} GB) — fast instant generation.",
+                f"🟢 **Installed** ({new_st['size_gb']:.2f} GB) • {spec.note}",
                 gr.update(visible=False),
-                gr.update(value=f"✅ **{spec.name}** weights successfully downloaded and verified!", visible=True),
             )
         else:
-            return (
-                f"❌ **Download Error:** Could not complete {spec.name} download. Check your connection or HF_TOKEN.",
-                gr.update(visible=True),
-                gr.update(value=f"⚠️ Failed to download {spec.name}. See terminal log for details.", visible=True),
-            )
+            raise gr.Error(f"Could not complete {spec.name} download. Check your connection or HF_TOKEN.")
 
     dl_btn.click(
         fn=on_tab_download,
-        outputs=[status_badge, dl_btn, dl_notice],
+        outputs=[status_badge, dl_btn],
     )
 
     with gr.Row():
@@ -137,14 +127,14 @@ def build_generation_tab(spec: ModelSpec):
                             examples=cat_items,
                             inputs=[prompt_input, duration_slider],
                             examples_per_page=25,
-                            label=f"{cat_label} Presets",
+                            label="Presets",
                         )
         else:
             gr.Examples(
                 examples=spec.examples,
                 inputs=[prompt_input, duration_slider],
                 examples_per_page=25,
-                label="Inspiration Presets",
+                label="Presets",
             )
 
     def on_generate(p, np_prompt, dur, st, cfg, sd, progress=gr.Progress(track_tqdm=True)):
@@ -175,8 +165,8 @@ def build_generation_tab(spec: ModelSpec):
 
 
 def build_diagnostics_tab():
-    """Construct read-only hardware and model cache diagnostics tab."""
-    gr.Markdown("### 🖥️ Hardware & Environment Information")
+    """Construct hardware and model cache diagnostics tab."""
+    gr.Markdown("### 🖥️ Hardware & Environment")
     gr.Markdown(f"""
 - **Active GPU**: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None (CPU)'}
 - **PyTorch Version**: `{torch.__version__}`
@@ -184,15 +174,15 @@ def build_diagnostics_tab():
 - **Audio Output Directory**: `outputs/`
     """)
 
-    gr.Markdown("### 📦 Local Model Cache Status (Read-Only)")
+    gr.Markdown("### 📦 Installed Models & Local Cache")
     table_lines = [
-        "| Model Variant | Cache Status | Local Size | Parameters | Max Duration | Hugging Face Repository |",
+        "| Model | Status | Size on Disk | Parameters | Max Duration | Repository |",
         "| :--- | :---: | :---: | :---: | :---: | :--- |",
     ]
     for name, spec in MODELS.items():
         st = check_model_cache(name)
-        status_icon = "✅ Ready" if st["downloaded"] else "📥 Not Downloaded"
-        size_str = f"{st['size_gb']:.2f} GB" if st["downloaded"] else "0 GB"
+        status_icon = "🟢 Installed" if st["downloaded"] else "⚪ Not Downloaded"
+        size_str = f"{st['size_gb']:.2f} GB" if st["downloaded"] else "—"
         table_lines.append(
             f"| **{name}** | {status_icon} | {size_str} | {spec.parameters} | {spec.max_duration:.0f}s | [`{spec.repo_id}`](https://huggingface.co/{spec.repo_id}) |"
         )

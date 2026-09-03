@@ -75,6 +75,6 @@ def get_device_banner() -> str:
         ram_info = ""
         total_ram = get_system_ram_gb()
         if total_ram:
-            ram_info = f" | **System RAM:** {total_ram:.0f} GB (Shared GPU Memory)"
-        return f"🚀 **GPU Accelerated:** {gpu_name} ({vram:.1f} GB VRAM){ram_info} | **PyTorch:** {torch.__version__} | **CUDA:** {cuda_ver}"
-    return f"⚠️ **Running on CPU** | **PyTorch:** {torch.__version__}"
+            ram_info = f" • **System RAM:** {total_ram:.0f} GB"
+        return f"⚡ **Hardware:** {gpu_name} ({vram:.1f} GB VRAM){ram_info} • **PyTorch:** {torch.__version__} (CUDA {cuda_ver})"
+    return f"⚠️ **Hardware:** CPU Only • **PyTorch:** {torch.__version__}"
