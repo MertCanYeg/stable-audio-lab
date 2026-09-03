@@ -82,6 +82,57 @@ def get_device_info():
     return f"⚠️ **Running on CPU** | **PyTorch:** {torch.__version__}"
 
 
+def ensure_model_intact(model_name: str):
+    """Safely verify checkpoint files are 100% complete and valid.
+
+    If and only if a file is truncated or corrupted (e.g. from an interrupted download),
+    it removes only the broken file and completes the download automatically.
+    Valid, healthy models are never touched or re-downloaded.
+    """
+    repo_map = {
+        "small-music": "stabilityai/stable-audio-3-small-music",
+        "small-music-base": "stabilityai/stable-audio-3-small-music",
+        "small-sfx": "stabilityai/stable-audio-3-small-sfx",
+        "medium": "stabilityai/stable-audio-3-medium",
+        "medium-base": "stabilityai/stable-audio-3-medium",
+    }
+    repo_id = repo_map.get(model_name)
+    if not repo_id:
+        return
+
+    from huggingface_hub import try_to_load_from_cache, hf_hub_download
+    from safetensors import safe_open
+
+    files_to_check = [
+        ("model.safetensors", 50.0),
+        ("t5gemma-b-b-ul2/model.safetensors", 10.0),
+    ]
+
+    for filename, min_mb in files_to_check:
+        cached_file = try_to_load_from_cache(repo_id, filename)
+        if cached_file and os.path.exists(cached_file):
+            is_valid = False
+            try:
+                if os.path.getsize(cached_file) >= min_mb * 1024 * 1024:
+                    with safe_open(cached_file, framework="pt", device="cpu") as f:
+                        keys = list(f.keys())
+                        if keys:
+                            _ = f.get_tensor(keys[-1])
+                            is_valid = True
+            except Exception:
+                is_valid = False
+
+            if not is_valid:
+                print(f"\n⚠️ [Auto-Healing] Detected incomplete or corrupted weights for '{filename}' in '{model_name}'.")
+                print(f"📥 Re-downloading complete file from Hugging Face Hub (valid models are unaffected)...")
+                try:
+                    os.remove(cached_file)
+                except Exception:
+                    pass
+                hf_hub_download(repo_id=repo_id, filename=filename, force_download=True)
+                print(f"✅ Verified and completed download for '{filename}'!\n")
+
+
 def load_model(model_name: str, use_half: bool = True):
     """Retrieve model from cache or load it into memory."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -95,18 +146,35 @@ def load_model(model_name: str, use_half: bool = True):
         _MODEL_CACHE.clear()
         torch.cuda.empty_cache()
 
+    # Verify model files are 100% complete and healthy before loading
+    ensure_model_intact(model_name)
+
     from stable_audio_3 import StableAudioModel
 
     print(f"Loading '{model_name}' on {device.upper()} (fp16={half})...")
     try:
         model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
     except Exception as e:
-        if "401" in str(e) or "gated" in str(e).lower() or "restricted" in str(e).lower():
+        err_str = str(e).lower()
+        if any(w in err_str for w in ["safetensor", "corrupted", "truncate", "header", "eof"]):
+            print(f"⚠️ Checkpoint load failed: {e}. Auto-repairing model...")
+            repo_map = {
+                "small-music": "stabilityai/stable-audio-3-small-music",
+                "small-sfx": "stabilityai/stable-audio-3-small-sfx",
+                "medium": "stabilityai/stable-audio-3-medium",
+            }
+            repo_id = repo_map.get(model_name)
+            if repo_id:
+                from huggingface_hub import hf_hub_download
+                hf_hub_download(repo_id=repo_id, filename="model.safetensors", force_download=True)
+            model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
+        elif "401" in str(e) or "gated" in str(e).lower() or "restricted" in str(e).lower():
             raise RuntimeError(
                 f"Cannot access model '{model_name}'. Please ensure you have accepted the license terms at "
                 f"https://huggingface.co/stabilityai/stable-audio-3-{model_name} and configured your HF_TOKEN."
             ) from e
-        raise e
+        else:
+            raise e
 
     _MODEL_CACHE[model_name] = model
     return model

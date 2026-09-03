@@ -135,6 +135,9 @@ def main():
 
     use_half = (device == "cuda") and (not args.no_half)
 
+    from app import ensure_model_intact
+    ensure_model_intact(args.model)
+
     print(f"Loading model '{args.model}' on {device.upper()} (fp16={use_half})...")
     load_start = time.time()
     try:
