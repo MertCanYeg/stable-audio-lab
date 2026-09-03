@@ -59,6 +59,8 @@ def build_generation_tab(spec: ModelSpec):
     dl_btn.click(
         fn=on_tab_download,
         outputs=[status_badge, dl_btn],
+        concurrency_id="download_worker",
+        concurrency_limit=1,
     )
 
     with gr.Row():
@@ -164,6 +166,8 @@ def build_generation_tab(spec: ModelSpec):
             seed_input,
         ],
         outputs=[audio_output, status_output],
+        concurrency_id="gpu_worker",
+        concurrency_limit=1,
     )
 
 
@@ -255,7 +259,7 @@ def main():
     args = parser.parse_args()
 
     app = create_app(model_mode=args.model)
-    app.queue()
+    app.queue(default_concurrency_limit=1)
     app.launch(
         server_name=args.host,
         server_port=args.port,
