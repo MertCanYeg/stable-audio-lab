@@ -2,291 +2,85 @@
 """Interactive Multi-Model Tabbed Studio for Stable Audio 3."""
 
 import argparse
-import os
 import sys
-import time
-from datetime import datetime
-from pathlib import Path
-import numpy as np
-import soundfile as sf
-import torch
-import warnings
 from dotenv import load_dotenv
 
-# Suppress known deprecation warnings
-warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
-warnings.filterwarnings("ignore", message=".*flop counting.*")
-
-# Optimize attention fallback on Windows without Triton (eliminates Dynamo compile warnings)
-try:
-    import triton
-except ImportError:
-    try:
-        import stable_audio_3.models.transformer as _sat
-        _sat.flex_attention_compiled = None
-    except Exception:
-        pass
-
-# Silence harmless Windows asyncio ConnectionResetError [WinError 10054] when browser finishes or refreshes stream
-if sys.platform == "win32":
-    try:
-        from asyncio.proactor_events import _ProactorBasePipeTransport
-        _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
-
-        def _patched_call_connection_lost(self, exc):
-            try:
-                _orig_call_connection_lost(self, exc)
-            except ConnectionResetError:
-                pass
-
-        _ProactorBasePipeTransport._call_connection_lost = _patched_call_connection_lost
-    except Exception:
-        pass
-
-# Load .env file for HF token
+# Load environment & tokens
 load_dotenv()
 
-# Global model cache to avoid reloading weights into VRAM repeatedly
-_MODEL_CACHE = {}
+import gradio as gr
+import torch
+
+from core.compat import init_platform_compat, get_device_banner
+from core.engine import generate_audio
+from core.registry import MODELS, ModelSpec, get_model_spec
+from core.storage import check_model_cache, download_model
+
+# Apply runtime compatibility patches (Triton fallback, asyncio reset, warning filters)
+init_platform_compat()
 
 
-def get_device_info():
-    """Return device, VRAM, and System RAM status string."""
-    if torch.cuda.is_available():
-        gpu_name = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        cuda_ver = torch.version.cuda
-        ram_info = ""
-        try:
-            import ctypes
-            class _M(ctypes.Structure):
-                _fields_ = [
-                    ("dwLength", ctypes.c_ulong),
-                    ("dwMemoryLoad", ctypes.c_ulong),
-                    ("ullTotalPhys", ctypes.c_ulonglong),
-                    ("ullAvailPhys", ctypes.c_ulonglong),
-                    ("ullTotalPageFile", ctypes.c_ulonglong),
-                    ("ullAvailPageFile", ctypes.c_ulonglong),
-                    ("ullTotalVirtual", ctypes.c_ulonglong),
-                    ("ullAvailVirtual", ctypes.c_ulonglong),
-                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
-                ]
-            m = _M()
-            m.dwLength = ctypes.sizeof(_M)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-            sys_ram = m.ullTotalPhys / (1024**3)
-            ram_info = f" | **System RAM:** {sys_ram:.0f} GB (Shared GPU Memory)"
-        except Exception:
-            pass
-        return f"🚀 **GPU Accelerated:** {gpu_name} ({vram:.1f} GB VRAM){ram_info} | **PyTorch:** {torch.__version__} | **CUDA:** {cuda_ver}"
-    return f"⚠️ **Running on CPU** | **PyTorch:** {torch.__version__}"
-
-
-def ensure_model_intact(model_name: str):
-    """Safely verify checkpoint files are 100% complete and valid.
-
-    If and only if a file is truncated or corrupted (e.g. from an interrupted download),
-    it removes only the broken file and completes the download automatically.
-    Valid, healthy models are never touched or re-downloaded.
-    """
-    repo_map = {
-        "small-music": "stabilityai/stable-audio-3-small-music",
-        "small-music-base": "stabilityai/stable-audio-3-small-music",
-        "small-sfx": "stabilityai/stable-audio-3-small-sfx",
-        "medium": "stabilityai/stable-audio-3-medium",
-        "medium-base": "stabilityai/stable-audio-3-medium",
-    }
-    repo_id = repo_map.get(model_name)
-    if not repo_id:
-        return
-
-    from huggingface_hub import try_to_load_from_cache, hf_hub_download
-    from safetensors import safe_open
-
-    files_to_check = [
-        ("model.safetensors", 50.0),
-        ("t5gemma-b-b-ul2/model.safetensors", 10.0),
-    ]
-
-    for filename, min_mb in files_to_check:
-        cached_file = try_to_load_from_cache(repo_id, filename)
-        if cached_file and os.path.exists(cached_file):
-            is_valid = False
-            try:
-                if os.path.getsize(cached_file) >= min_mb * 1024 * 1024:
-                    with safe_open(cached_file, framework="pt", device="cpu") as f:
-                        keys = list(f.keys())
-                        if keys:
-                            _ = f.get_tensor(keys[-1])
-                            is_valid = True
-            except Exception:
-                is_valid = False
-
-            if not is_valid:
-                print(f"\n⚠️ [Auto-Healing] Detected incomplete or corrupted weights for '{filename}' in '{model_name}'.")
-                print(f"📥 Re-downloading complete file from Hugging Face Hub (valid models are unaffected)...")
-                try:
-                    os.remove(cached_file)
-                except Exception:
-                    pass
-                hf_hub_download(repo_id=repo_id, filename=filename, force_download=True)
-                print(f"✅ Verified and completed download for '{filename}'!\n")
-
-
-def load_model(model_name: str, use_half: bool = True):
-    """Retrieve model from cache or load it into memory."""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    half = (device == "cuda") and use_half
-
-    if model_name in _MODEL_CACHE:
-        return _MODEL_CACHE[model_name]
-
-    # When loading Medium, evict smaller models from cache to maximize VRAM headroom
-    if model_name == "medium" and torch.cuda.is_available():
-        _MODEL_CACHE.clear()
-        torch.cuda.empty_cache()
-
-    # Verify model files are 100% complete and healthy before loading
-    ensure_model_intact(model_name)
-
-    from stable_audio_3 import StableAudioModel
-
-    print(f"Loading '{model_name}' on {device.upper()} (fp16={half})...")
-    try:
-        model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
-    except Exception as e:
-        err_str = str(e).lower()
-        if any(w in err_str for w in ["safetensor", "corrupted", "truncate", "header", "eof"]):
-            print(f"⚠️ Checkpoint load failed: {e}. Auto-repairing model...")
-            repo_map = {
-                "small-music": "stabilityai/stable-audio-3-small-music",
-                "small-sfx": "stabilityai/stable-audio-3-small-sfx",
-                "medium": "stabilityai/stable-audio-3-medium",
-            }
-            repo_id = repo_map.get(model_name)
-            if repo_id:
-                from huggingface_hub import hf_hub_download
-                hf_hub_download(repo_id=repo_id, filename="model.safetensors", force_download=True)
-            model = StableAudioModel.from_pretrained(model_name, device=device, model_half=half)
-        elif "401" in str(e) or "gated" in str(e).lower() or "restricted" in str(e).lower():
-            raise RuntimeError(
-                f"Cannot access model '{model_name}'. Please ensure you have accepted the license terms at "
-                f"https://huggingface.co/stabilityai/stable-audio-3-{model_name} and configured your HF_TOKEN."
-            ) from e
-        else:
-            raise e
-
-    _MODEL_CACHE[model_name] = model
-    return model
-
-
-def generate_audio(
-    model_name: str,
-    prompt: str,
-    negative_prompt: str,
-    duration: float,
-    steps: int,
-    cfg_scale: float,
-    seed: int,
-    progress=None,
-):
-    """Generate audio and save it to outputs/."""
-    if not prompt or not prompt.strip():
-        raise ValueError("Please enter a text prompt.")
-
-    start_time = time.time()
-
-    # Empty cache before generation to maximize available VRAM
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    model = load_model(model_name)
-
-    seed_val = int(seed) if seed is not None and seed != -1 else -1
-
-    # Extract model's configured max sample size (e.g. 5292032 for small models, 16777216 for medium)
-    max_sample_size = model.model_config.get("sample_size", 5292032)
-
-    try:
-        audio = model.generate(
-            prompt=prompt.strip(),
-            negative_prompt=negative_prompt.strip() if negative_prompt else None,
-            duration=float(duration),
-            steps=int(steps),
-            cfg_scale=float(cfg_scale),
-            seed=seed_val,
-            sample_size=max_sample_size,
-        )
-    except torch.cuda.OutOfMemoryError as e:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        import gradio as gr
-        raise gr.Error(
-            f"CUDA Out of Memory! Requested {duration:.0f}s on '{model_name}' exceeded your GPU's VRAM. "
-            f"Tip: Try reducing duration (e.g. 15s-30s) or switch to 'small-music' (~2GB VRAM)."
-        ) from e
-    except Exception as e:
-        if "401" in str(e) or "gated" in str(e).lower():
-            import gradio as gr
-            raise gr.Error(
-                f"License not accepted for '{model_name}'. Please visit "
-                f"https://huggingface.co/stabilityai/stable-audio-3-{model_name} and click 'Agree and access repository'."
-            ) from e
-        raise e
-
-    gen_time = time.time() - start_time
-    speed = float(steps) / gen_time if gen_time > 0 else 0
-
-    # Clean up VRAM after generation
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    # Save audio file
-    output_dir = Path("outputs")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    sanitized = "".join(c if c.isalnum() else "_" for c in prompt[:30]).strip("_")
-    out_path = output_dir / f"{timestamp}_{model_name}_{sanitized}.wav"
-
-    sample_rate = model.model.sample_rate
-    audio_tensor = audio[0].detach().cpu()
-    audio_np = audio_tensor.numpy().T
-    sf.write(str(out_path), audio_np, sample_rate)
-
-    status_msg = (
-        f"✅ Generated **{duration:.1f}s** in **{gen_time:.2f}s** "
-        f"({speed:.1f} steps/s) | Model: `{model_name}` | Saved to `{out_path.name}`"
-    )
-    return str(out_path), status_msg
-
-
-def build_generation_tab(
-    model_name: str,
-    default_prompt: str,
-    default_duration: float,
-    examples: list,
-    max_duration: float = 120.0,
-    note: str = None,
-):
+def build_generation_tab(spec: ModelSpec):
     """Construct a clean, responsive generation interface for a specific model."""
-    import gradio as gr
+    init_status = check_model_cache(spec.name)
+    is_ready = init_status["downloaded"]
 
-    if note:
-        gr.Markdown(note)
+    if spec.note:
+        gr.Markdown(spec.note)
+
+    # In-tab Model Status and Download Manager
+    with gr.Row(variant="panel"):
+        with gr.Column(scale=8):
+            status_badge = gr.Markdown(
+                f"🟢 **Model Status:** Ready on disk ({init_status['size_gb']:.2f} GB) — fast instant generation."
+                if is_ready
+                else f"🟠 **Model Status:** Not downloaded yet ({init_status['status_text']}). You can pre-download weights now or click Generate to auto-download."
+            )
+        with gr.Column(scale=4, min_width=220):
+            dl_btn = gr.Button(
+                f"📥 Download {spec.name} Weights",
+                variant="secondary",
+                size="sm",
+                visible=not is_ready,
+            )
+
+    dl_notice = gr.Markdown("", visible=False)
+
+    def on_tab_download(progress=gr.Progress(track_tqdm=True)):
+        progress(0.05, desc=f"Connecting to Hugging Face Hub for {spec.name}...")
+        success = download_model(spec.name)
+        new_st = check_model_cache(spec.name)
+        if success and new_st["downloaded"]:
+            return (
+                f"🟢 **Model Status:** Ready on disk ({new_st['size_gb']:.2f} GB) — fast instant generation.",
+                gr.update(visible=False),
+                gr.update(value=f"✅ **{spec.name}** weights successfully downloaded and verified!", visible=True),
+            )
+        else:
+            return (
+                f"❌ **Download Error:** Could not complete {spec.name} download. Check your connection or HF_TOKEN.",
+                gr.update(visible=True),
+                gr.update(value=f"⚠️ Failed to download {spec.name}. See terminal log for details.", visible=True),
+            )
+
+    dl_btn.click(
+        fn=on_tab_download,
+        outputs=[status_badge, dl_btn, dl_notice],
+    )
 
     with gr.Row():
         with gr.Column(scale=5):
             prompt_input = gr.Textbox(
                 label="Prompt",
-                value=default_prompt,
+                value=spec.default_prompt,
                 lines=3,
                 placeholder="Describe the audio you want to generate...",
             )
             with gr.Row():
                 duration_slider = gr.Slider(
                     minimum=1.0,
-                    maximum=max_duration,
-                    value=default_duration,
+                    maximum=spec.max_duration,
+                    value=spec.default_duration,
                     step=1.0,
                     label="Duration (seconds)",
                 )
@@ -301,7 +95,7 @@ def build_generation_tab(
             with gr.Accordion("Advanced Settings", open=False):
                 negative_prompt_input = gr.Textbox(
                     label="Negative Prompt",
-                    placeholder="Qualities or instruments to avoid...",
+                    placeholder="Describe sounds or artifacts to avoid...",
                     lines=1,
                 )
                 with gr.Row():
@@ -333,10 +127,11 @@ def build_generation_tab(
             )
             status_output = gr.Markdown("Ready to generate.")
 
-    if examples:
-        if isinstance(examples, dict):
+    # Inspiration Presets
+    if spec.examples:
+        if isinstance(spec.examples, dict):
             with gr.Tabs():
-                for cat_label, cat_items in examples.items():
+                for cat_label, cat_items in spec.examples.items():
                     with gr.Tab(cat_label):
                         gr.Examples(
                             examples=cat_items,
@@ -346,14 +141,24 @@ def build_generation_tab(
                         )
         else:
             gr.Examples(
-                examples=examples,
+                examples=spec.examples,
                 inputs=[prompt_input, duration_slider],
                 examples_per_page=25,
                 label="Inspiration Presets",
             )
 
-    def on_generate(p, np_prompt, dur, st, cfg, sd):
-        return generate_audio(model_name, p, np_prompt, dur, st, cfg, sd)
+    def on_generate(p, np_prompt, dur, st, cfg, sd, progress=gr.Progress(track_tqdm=True)):
+        out_file, status = generate_audio(
+            model_name=spec.name,
+            prompt=p,
+            negative_prompt=np_prompt,
+            duration=dur,
+            steps=st,
+            cfg_scale=cfg,
+            seed=sd,
+            progress=progress,
+        )
+        return out_file, status
 
     generate_btn.click(
         fn=on_generate,
@@ -369,63 +174,34 @@ def build_generation_tab(
     )
 
 
+def build_diagnostics_tab():
+    """Construct read-only hardware and model cache diagnostics tab."""
+    gr.Markdown("### 🖥️ Hardware & Environment Information")
+    gr.Markdown(f"""
+- **Active GPU**: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None (CPU)'}
+- **PyTorch Version**: `{torch.__version__}`
+- **CUDA Runtime**: `{torch.version.cuda if torch.cuda.is_available() else 'N/A'}`
+- **Audio Output Directory**: `outputs/`
+    """)
+
+    gr.Markdown("### 📦 Local Model Cache Status (Read-Only)")
+    table_lines = [
+        "| Model Variant | Cache Status | Local Size | Parameters | Max Duration | Hugging Face Repository |",
+        "| :--- | :---: | :---: | :---: | :---: | :--- |",
+    ]
+    for name, spec in MODELS.items():
+        st = check_model_cache(name)
+        status_icon = "✅ Ready" if st["downloaded"] else "📥 Not Downloaded"
+        size_str = f"{st['size_gb']:.2f} GB" if st["downloaded"] else "0 GB"
+        table_lines.append(
+            f"| **{name}** | {status_icon} | {size_str} | {spec.parameters} | {spec.max_duration:.0f}s | [`{spec.repo_id}`](https://huggingface.co/{spec.repo_id}) |"
+        )
+
+    gr.Markdown("\n".join(table_lines))
+
+
 def create_app(model_mode: str = "all"):
-    """Create the Gradio interface with tabs or single model mode."""
-    import gradio as gr
-
-    music_examples = [
-        ["Upbeat funky bassline with warm rhodes piano and crisp drums", 15.0],
-        ["2000s alternative rock with heavy drop-tuned guitars, driving drums, and angsty melodic chorus", 30.0],
-        ["70s Anatolian psychedelic rock with electric bağlama fuzz lead, groovy bassline, and swirling phaser guitars", 30.0],
-        ["Rainy Tokyo lo-fi jazzhop beat with gentle rain, dusty vinyl crackle, warm Rhodes piano, and boom-bap swing", 30.0],
-        ["80s Japanese City Pop with bright slap bass, funk rhythm guitar, electric piano, and sparkling brass stabs", 30.0],
-        ["Smooth jazz trumpet solo over mellow acoustic drums and walking upright bass in a late night club", 20.0],
-        ["Traditional Turkish classical art music with melancholic Oud, delicate Kanun flourishes, and soft Bendir", 25.0],
-        ["Passionate Spanish flamenco with rapid nylon guitar rasgueado, wooden cajon, and rhythmic palmas", 20.0],
-        ["Catchy 90s French touch nu-disco with filtered slap bass, four-on-the-floor kick, and joyful phaser synths", 25.0],
-        ["Raw acoustic Delta blues with bottleneck slide resonator guitar and rhythmic wooden floor stomps", 20.0],
-        ["Cozy 16-bit SNES RPG town theme with playful marimba, gentle wooden flute, and warm chiptune bass", 20.0],
-        ["Desert stoner rock with heavy fuzz down-tuned guitars, thick bass, and swinging dry room drums", 25.0],
-    ]
-
-    sfx_examples = [
-        ["TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze", 3.0],
-        ["TrackType: SFX, deep campfire crackling and popping in a dense pine forest with gentle whistling night wind", 15.0],
-        ["TrackType: SFX, powerful sci-fi plasma rifle blaster shot with metallic electrical dissipation", 3.0],
-        ["TrackType: SFX, heavy thunderstorm with torrential rain pouring against a window and distant rolling thunder", 30.0],
-        ["TrackType: SFX, classic cartoon boing spring bounce sound effect, comedic and bouncy", 3.0],
-        ["TrackType: SFX, heavy pneumatic spaceship airlock door depressurizing with a loud industrial hiss", 5.0],
-        ["TrackType: SFX, futuristic laser sword igniting with a sharp hum and vibrating idle buzz", 4.0],
-        ["TrackType: SFX, gentle ocean waves lapping against a pebbly beach with distant seagulls", 20.0],
-        ["TrackType: SFX, wooden door creaking slowly open in an eerie hallway followed by a heavy latch click", 5.0],
-        ["TrackType: SFX, vintage typewriter rapidly clacking with a carriage return bell ding", 6.0],
-        ["TrackType: SFX, bustling cozy coffee shop ambience with quiet chatter, clinking espresso cups, and background murmur", 20.0],
-        ["TrackType: SFX, deep cinematic impact sub-bass braam hit with long reverberant decay", 6.0],
-    ]
-
-    medium_examples = {
-        "🎵 Music & Cinematic": [
-            ["Massive cinematic sci-fi orchestral trailer theme with thundering timpani, colossal brass swells, and soaring strings", 30.0],
-            ["Ancient Nordic Viking folk music with resonant tagelharpa, bowed lyre, hypnotic shamanic frame drum, and deep vocal drone", 35.0],
-            ["80s retro synthwave outrun anthem with driving analog arpeggios, punchy gated reverb snare, and soaring guitar lead", 30.0],
-            ["Dark cyberpunk neo-noir soundtrack with solitary melancholic muted trumpet, deep sub-bass drone, and rainy neon city pads", 30.0],
-            ["Soulful 70s Motown funk with live brass section, warm Hammond B3 organ, rhythmic wah-wah guitar, and melodic bass", 30.0],
-            ["Epic fantasy highland soundtrack with evocative Celtic uilleann pipes, tin whistle, sweeping orchestral strings, and bodhrán", 35.0],
-            ["Melodic organic deep house with subtle marimba plucks, smooth round sub-bass, crisp shakers, and lush sunset beach reverb", 30.0],
-            ["Late night smoky noir jazz ballad with expressive tenor saxophone, brushed snare, and warm upright double bass", 30.0],
-            ["Deep space ambient meditation soundscape with evolving granular shimmer pads, zero-gravity drone, and ethereal harmonic resonances", 45.0],
-            ["Alternative 2000s post-grunge hard rock anthem with wall-of-sound distorted guitars, punchy arena drums, and soaring melody", 30.0],
-        ],
-        "🔊 Sound Effects & Foley": [
-            ["TrackType: SFX, colossal cinematic explosion with deep sub-bass shockwave, flying debris, and reverberant metallic tail", 6.0],
-            ["TrackType: SFX, thunderstorm inside a dense tropical rainforest with raindrops hitting large leaves and distant rolling thunder", 30.0],
-            ["TrackType: SFX, massive robotic mech powering up with mechanical servo whines, hydraulic hiss, and heavy metallic footsteps", 8.0],
-            ["TrackType: SFX, ominous mythical monster roar echoing inside a cavernous underground cave with terrifying guttural growl", 6.0],
-            ["TrackType: SFX, futuristic hovercar soaring past at high speed with a Doppler pitch shift and turbo jet exhaust whine", 5.0],
-            ["TrackType: SFX, medieval castle siege with flaming catapult boulders launching, wooden wheels creaking, and ambient battle chaos", 15.0],
-        ],
-    }
-
+    """Create the Gradio Blocks application."""
     theme = gr.themes.Soft(
         primary_hue="indigo",
         secondary_hue="blue",
@@ -434,88 +210,19 @@ def create_app(model_mode: str = "all"):
 
     with gr.Blocks(title="Stable Audio Lab Studio") as demo:
         gr.Markdown("# 🎧 Stable Audio Lab Studio")
-        gr.Markdown(get_device_info())
+        gr.Markdown(get_device_banner())
 
         if model_mode == "all":
             with gr.Tabs():
-                with gr.Tab("🎵 Music (Small-Music)"):
-                    build_generation_tab(
-                        model_name="small-music",
-                        default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
-                        default_duration=15.0,
-                        max_duration=120.0,
-                        examples=music_examples,
-                    )
-                with gr.Tab("🔊 Sound Effects (Small-SFX)"):
-                    build_generation_tab(
-                        model_name="small-sfx",
-                        default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
-                        default_duration=5.0,
-                        max_duration=120.0,
-                        examples=sfx_examples,
-                    )
-                with gr.Tab("🎛️ Medium (1.4B Quality)"):
-                    build_generation_tab(
-                        model_name="medium",
-                        default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
-                        default_duration=15.0,
-                        max_duration=380.0,
-                        examples=medium_examples,
-                        note="💡 **Flagship Model:** Stable Audio 3 Medium (1.4B) trained up to **380s (~6.3 mins)**. On Windows, if memory exceeds dedicated VRAM during long generations, the driver automatically utilizes Shared System Memory.",
-                    )
+                for name, spec in MODELS.items():
+                    with gr.Tab(spec.display_name):
+                        build_generation_tab(spec)
                 with gr.Tab("ℹ️ System Diagnostics"):
-                    gr.Markdown("### Workspace & Hardware Information")
-                    gr.Markdown(f"""
-- **Active GPU**: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None (CPU)'}
-- **PyTorch Version**: `{torch.__version__}`
-- **CUDA Runtime**: `{torch.version.cuda if torch.cuda.is_available() else 'N/A'}`
-- **Supported Models**:
-  - `small-music` (433M parameters, 44.1 kHz stereo composition, max 120s)
-  - `small-sfx` (433M parameters, 44.1 kHz stereo sound effects, max 120s)
-  - `medium` (1.4B parameters, production audio, max 380s)
-- **Audio Output Directory**: `outputs/`
-- **Hugging Face License Links**:
-  - [small-music](https://huggingface.co/stabilityai/stable-audio-3-small-music)
-  - [small-sfx](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)
-  - [medium](https://huggingface.co/stabilityai/stable-audio-3-medium)
-                    """)
-        elif model_mode == "small-sfx":
-            gr.Markdown("### 🔊 Stable Audio 3 Small (Sound Effects)")
-            build_generation_tab(
-                model_name="small-sfx",
-                default_prompt="TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze",
-                default_duration=5.0,
-                max_duration=120.0,
-                examples=sfx_examples,
-            )
-        elif model_mode == "small-music":
-            gr.Markdown("### 🎵 Stable Audio 3 Small (Music)")
-            build_generation_tab(
-                model_name="small-music",
-                default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
-                default_duration=15.0,
-                max_duration=120.0,
-                examples=music_examples,
-            )
-        elif model_mode == "medium":
-            gr.Markdown("### 🎛️ Stable Audio 3 Medium (1.4B)")
-            build_generation_tab(
-                model_name="medium",
-                default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
-                default_duration=15.0,
-                max_duration=380.0,
-                examples=medium_examples,
-                note="💡 **Flagship Model:** Stable Audio 3 Medium (1.4B) trained up to **380s (~6.3 mins)**. On Windows, if memory exceeds dedicated VRAM during long generations, the driver automatically utilizes Shared System Memory.",
-            )
+                    build_diagnostics_tab()
         else:
-            gr.Markdown(f"### 🎛️ Stable Audio 3 ({model_mode})")
-            build_generation_tab(
-                model_name=model_mode,
-                default_prompt="Upbeat lo-fi beat",
-                default_duration=15.0,
-                max_duration=60.0,
-                examples=music_examples,
-            )
+            spec = get_model_spec(model_mode)
+            gr.Markdown(f"### {spec.display_name}")
+            build_generation_tab(spec)
 
     return demo
 
@@ -530,8 +237,8 @@ def main():
         "-m",
         type=str,
         default="all",
-        choices=["all", "small-music", "small-sfx", "medium"],
-        help="Launch with all switchable model tabs ('all'), or specify a single model ('small-music', 'small-sfx', 'medium')",
+        choices=["all"] + list(MODELS.keys()),
+        help="Launch with all switchable model tabs ('all'), or specify a single model",
     )
     parser.add_argument(
         "--port",

@@ -95,19 +95,43 @@ Open `http://127.0.0.1:7860` in your browser.
 
 ---
 
+## 📦 Pre-Downloading Models (Optional)
+
+If you prefer to pre-download model weights from the terminal with progress bars before opening the UI:
+
+```bash
+# Check cache status of all models
+pixi run download-models --status
+
+# Pre-download all models (~16 GB total)
+pixi run download-models
+
+# Pre-download a specific model
+pixi run python download_models.py --model medium
+```
+
+Within the Gradio Web Studio (`pixi run ui`), each model tab also displays a live **Model Status** badge and a one-click download button with real-time progress bars.
+
+---
+
 ## 📁 Project Structure
 
 ```
 stable-audio-lab/
-├── pixi.toml          # Declarative environment & tasks definition
-├── pixi.lock          # Cross-platform dependency lockfile
-├── check_env.py       # Diagnostic script for GPU, PyTorch, and HF Auth
-├── generate.py        # CLI generation tool
-├── app.py             # Gradio web interface launcher
-├── LICENSE            # MIT License
-├── .env.example       # Template for Hugging Face access token
-├── .gitignore         # Ignores outputs/, .env, and build caches
-└── outputs/           # Destination folder for generated audio files
+├── core/                  # Clean, modular engine & utilities
+│   ├── compat.py          # Platform & hardware compatibility (Triton fallback, asyncio, Win32 RAM)
+│   ├── registry.py        # Single source of truth for model specifications & presets
+│   ├── storage.py         # Checkpoint integrity validation & self-healing downloads
+│   └── engine.py          # VRAM cache management, inference pipeline & audio export
+├── app.py                 # Gradio Web Studio with in-tab model manager & read-only diagnostics
+├── generate.py            # Lean CLI generation tool
+├── download_models.py     # Terminal model pre-download manager
+├── check_env.py           # Hardware & authentication diagnostic script
+├── pixi.toml              # Declarative environment & tasks definition
+├── pixi.lock              # Cross-platform dependency lockfile
+├── LICENSE                # MIT License
+├── .env.example           # Template for Hugging Face access token
+└── outputs/               # Destination folder for generated audio files
 ```
 
 ---

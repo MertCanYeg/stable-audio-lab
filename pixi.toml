@@ -10,6 +10,7 @@ check-env = "python check_env.py"
 generate = "python generate.py"
 ui = "python app.py"
 update = "git pull"
+download-models = "python download_models.py"
 
 [dependencies]
 python = "3.12.*"
