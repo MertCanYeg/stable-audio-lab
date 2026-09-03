@@ -9,6 +9,7 @@ version = "0.1.0"
 check-env = "python check_env.py"
 generate = "python generate.py"
 ui = "python app.py"
+update = "git pull"
 
 [dependencies]
 python = "3.12.*"

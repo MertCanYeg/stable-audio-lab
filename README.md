@@ -121,6 +121,10 @@ cd stable-audio-lab
 cp .env.example .env   # add your HF_TOKEN
 pixi run ui            # automatically installs environment & launches studio
 ```
+To pull the latest updates anytime:
+```bash
+pixi run update        # pulls latest changes from repository
+```
 Pixi automatically handles Python installation, CUDA runtimes, PyTorch, and all dependencies without affecting the host system.
 
 ---
