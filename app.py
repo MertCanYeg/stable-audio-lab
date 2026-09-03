@@ -27,8 +27,10 @@ AUTO_SCROLL_JS = """
 
 CUSTOM_CSS = """
 .gradio-container {
-    max-width: 1360px !important;
+    max-width: 95% !important;
+    width: 95% !important;
     margin: 0 auto !important;
+    padding: 12px 24px !important;
 }
 .table-wrap {
     max-height: 280px !important;
@@ -45,21 +47,43 @@ CUSTOM_CSS = """
     border-radius: 6px;
     background-color: var(--background-fill-secondary);
     margin-bottom: 12px;
-    font-size: 0.9em;
+    font-size: 0.88em;
+    min-height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    box-sizing: border-box !important;
 }
-div[class*="slider"] {
-    overflow-x: hidden !important;
+.prompt-box textarea {
+    height: 76px !important;
+    min-height: 76px !important;
+    max-height: 76px !important;
+    resize: none !important;
+}
+.neg-prompt-box textarea {
+    height: 42px !important;
+    min-height: 42px !important;
+    max-height: 42px !important;
+    resize: none !important;
+}
+.gradio-slider input[type="number"] {
+    width: 72px !important;
+    min-width: 72px !important;
+    text-align: center !important;
+}
+.gradio-slider span, .gradio-slider label {
+    white-space: nowrap !important;
 }
 .status-console textarea {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
-    font-size: 0.78rem !important;
+    font-size: 0.82rem !important;
     line-height: 1.45 !important;
     background-color: #0d1117 !important;
     color: #e6edf3 !important;
     border: 1px solid #30363d !important;
     border-radius: 6px !important;
-    height: 270px !important;
-    white-space: pre !important;
+    height: 310px !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
 }
@@ -70,19 +94,19 @@ TAB_CONFIG = [
         "small-music",
         "Describe the musical track: genre, instruments, mood, tempo...",
         "e.g. vocals, speech, harsh treble, distortion, low quality, muddy bass, background noise",
-        "Optional: Suppress unwanted instruments, genres, vocal artifacts, or acoustic flaws.",
+        "Optional: Suppress unwanted instruments, vocals, or acoustic flaws.",
     ),
     (
         "small-sfx",
         "TrackType: SFX, describe the sound effect or foley soundscape...",
         "e.g. music, melody, singing, synthesizer, speech, hum",
-        "Optional: SFX models work best with natural prompts. Use negative prompt primarily to suppress music or speech.",
+        "Optional: Suppress unwanted music, melody, vocals, or background noise.",
     ),
     (
         "medium",
         "Describe the cinematic music or high-fidelity sound design...",
         "e.g. clipping, distortion, low quality, noise, out of tune, artifacts",
-        "Optional: Suppress specific acoustic flaws, distortion, or unwanted elements.",
+        "Optional: Suppress acoustic flaws, distortion, or unwanted elements.",
     ),
 ]
 
@@ -107,21 +131,20 @@ def generate(
         cfg_scale=cfg,
         seed=seed,
     )
+    config.validate()
 
-    q = queue.Queue()
-    init_msg = f"⏳ Initializing generation with '{model_name}'..."
-    logs = [init_msg]
-    yield None, logs[0]
-
-    def on_status(msg: str):
-        q.put(("status", msg))
+    q: queue.Queue = queue.Queue()
+    logs: list[str] = []
+    init_msg = f"Initializing {model_name}..."
+    logs.append(init_msg)
+    yield None, init_msg
 
     def worker():
         try:
             result = generate_audio(
                 config=config,
                 progress=progress,
-                status_callback=on_status,
+                status_callback=lambda msg: q.put(("status", msg)),
             )
             q.put(("done", result))
         except Exception as e:
@@ -180,7 +203,7 @@ def generate(
             else:
                 err_msg = f"❌ Generation failed: {err}"
                 yield None, f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
-                raise gr.Error(f"Generation failed: {err}") from err
+                raise gr.Error(err_msg) from err
 
 
 def reset_status():
@@ -198,7 +221,7 @@ def build_model_tab(
     spec = MODELS[model_name]
 
     banner = f"**{spec.name}** | Repo: `{spec.repo_id}` | Max Duration: {spec.max_duration:.0f}s | Audio: 44.1 kHz Stereo"
-    gr.Markdown(banner)
+    gr.Markdown(banner, elem_classes=["model-info-banner"])
 
     with gr.Row():
         with gr.Column(scale=1):
@@ -206,41 +229,46 @@ def build_model_tab(
                 label="Prompt",
                 value=spec.default_prompt,
                 lines=3,
+                max_lines=3,
                 placeholder=placeholder,
+                elem_classes=["prompt-box"],
             )
             negative_prompt = gr.Textbox(
                 label="Negative Prompt",
                 lines=1,
+                max_lines=1,
                 placeholder=neg_placeholder,
                 info=neg_info,
+                elem_classes=["neg-prompt-box"],
             )
-            with gr.Row():
-                duration = gr.Slider(
-                    minimum=1,
-                    maximum=int(spec.max_duration),
-                    value=int(spec.default_duration),
-                    step=1,
-                    label="Duration (seconds)",
-                )
-                steps = gr.Slider(
-                    minimum=4,
-                    maximum=50,
-                    value=8,
-                    step=1,
-                    label="Sampling Steps",
-                )
+            duration = gr.Slider(
+                minimum=1,
+                maximum=int(spec.max_duration),
+                value=int(spec.default_duration),
+                step=1,
+                label="Duration (seconds)",
+            )
+            steps = gr.Slider(
+                minimum=4,
+                maximum=50,
+                value=8,
+                step=1,
+                label="Sampling Steps",
+            )
             with gr.Row():
                 cfg = gr.Slider(
                     minimum=1.0,
                     maximum=15.0,
                     value=1.0,
                     step=0.5,
-                    label="CFG Scale",
+                    label="CFG",
+                    scale=2,
                 )
                 seed = gr.Number(
                     value=-1,
                     precision=0,
                     label="Seed (-1 = random)",
+                    scale=1,
                 )
             with gr.Row():
                 generate_btn = gr.Button(
