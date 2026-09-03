@@ -308,22 +308,24 @@ def create_app(model_mode: str = "all"):
     ]
 
     medium_examples = [
+        # Music & Cinematic Compositions
         ["Massive cinematic sci-fi orchestral trailer theme with thundering timpani, colossal brass swells, and soaring strings", 30.0],
-        ["TrackType: SFX, colossal cinematic explosion with deep sub-bass shockwave, flying debris, and reverberant metallic tail", 6.0],
         ["Ancient Nordic Viking folk music with resonant tagelharpa, bowed lyre, hypnotic shamanic frame drum, and deep vocal drone", 35.0],
-        ["TrackType: SFX, thunderstorm inside a dense tropical rainforest with raindrops hitting large leaves and distant rolling thunder", 30.0],
         ["80s retro synthwave outrun anthem with driving analog arpeggios, punchy gated reverb snare, and soaring guitar lead", 30.0],
-        ["TrackType: SFX, massive robotic mech powering up with mechanical servo whines, hydraulic hiss, and heavy metallic footsteps", 8.0],
         ["Dark cyberpunk neo-noir soundtrack with solitary melancholic muted trumpet, deep sub-bass drone, and rainy neon city pads", 30.0],
-        ["TrackType: SFX, ominous mythical monster roar echoing inside a cavernous underground cave with terrifying guttural growl", 6.0],
         ["Soulful 70s Motown funk with live brass section, warm Hammond B3 organ, rhythmic wah-wah guitar, and melodic bass", 30.0],
-        ["TrackType: SFX, futuristic hovercar soaring past at high speed with a Doppler pitch shift and turbo jet exhaust whine", 5.0],
         ["Epic fantasy highland soundtrack with evocative Celtic uilleann pipes, tin whistle, sweeping orchestral strings, and bodhrán", 35.0],
-        ["TrackType: SFX, medieval castle siege with flaming catapult boulders launching, wooden wheels creaking, and ambient battle chaos", 15.0],
         ["Melodic organic deep house with subtle marimba plucks, smooth round sub-bass, crisp shakers, and lush sunset beach reverb", 30.0],
         ["Late night smoky noir jazz ballad with expressive tenor saxophone, brushed snare, and warm upright double bass", 30.0],
         ["Deep space ambient meditation soundscape with evolving granular shimmer pads, zero-gravity drone, and ethereal harmonic resonances", 45.0],
         ["Alternative 2000s post-grunge hard rock anthem with wall-of-sound distorted guitars, punchy arena drums, and soaring melody", 30.0],
+        # Sound Effects & Sound Design
+        ["TrackType: SFX, colossal cinematic explosion with deep sub-bass shockwave, flying debris, and reverberant metallic tail", 6.0],
+        ["TrackType: SFX, thunderstorm inside a dense tropical rainforest with raindrops hitting large leaves and distant rolling thunder", 30.0],
+        ["TrackType: SFX, massive robotic mech powering up with mechanical servo whines, hydraulic hiss, and heavy metallic footsteps", 8.0],
+        ["TrackType: SFX, ominous mythical monster roar echoing inside a cavernous underground cave with terrifying guttural growl", 6.0],
+        ["TrackType: SFX, futuristic hovercar soaring past at high speed with a Doppler pitch shift and turbo jet exhaust whine", 5.0],
+        ["TrackType: SFX, medieval castle siege with flaming catapult boulders launching, wooden wheels creaking, and ambient battle chaos", 15.0],
     ]
 
     theme = gr.themes.Soft(
