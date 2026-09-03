@@ -279,25 +279,47 @@ def create_app(model_mode: str = "all"):
 
     music_examples = [
         ["Upbeat funky bassline with warm rhodes piano and crisp drums", 15.0],
-        ["Dreamy cinematic ambient synth pad with shimmering reverb and tape warmth", 20.0],
-        ["Smooth jazz trumpet solo over mellow acoustic drums and upright bass", 15.0],
-        ["TrackType: Music, traditional Turkish classical art music with Oud, Kanun, and Bendir", 20.0],
-        ["Lofi hip hop drum groove with relaxing electric piano chords and vinyl crackle", 30.0],
+        ["2000s alternative rock with heavy drop-tuned guitars, driving drums, and angsty melodic chorus", 30.0],
+        ["70s Anatolian psychedelic rock with electric bağlama fuzz lead, groovy bassline, and swirling phaser guitars", 30.0],
+        ["Rainy Tokyo lo-fi jazzhop beat with gentle rain, dusty vinyl crackle, warm Rhodes piano, and boom-bap swing", 30.0],
+        ["80s Japanese City Pop with bright slap bass, funk rhythm guitar, electric piano, and sparkling brass stabs", 30.0],
+        ["Smooth jazz trumpet solo over mellow acoustic drums and walking upright bass in a late night club", 20.0],
+        ["Traditional Turkish classical art music with melancholic Oud, delicate Kanun flourishes, and soft Bendir", 25.0],
+        ["Passionate Spanish flamenco with rapid nylon guitar rasgueado, wooden cajon, and rhythmic palmas", 20.0],
+        ["Catchy 90s French touch nu-disco with filtered slap bass, four-on-the-floor kick, and joyful phaser synths", 25.0],
+        ["Raw acoustic Delta blues with bottleneck slide resonator guitar and rhythmic wooden floor stomps", 20.0],
+        ["Cozy 16-bit SNES RPG town theme with playful marimba, gentle wooden flute, and warm chiptune bass", 20.0],
+        ["Desert stoner rock with heavy fuzz down-tuned guitars, thick bass, and swinging dry room drums", 25.0],
     ]
 
     sfx_examples = [
         ["TrackType: SFX, a funny high-pitched rubber clown nose squeak honk sound with a quick double squeeze", 3.0],
         ["TrackType: SFX, deep campfire crackling and popping in a dense pine forest with gentle whistling night wind", 15.0],
-        ["TrackType: SFX, powerful sci-fi plasma rifle blaster shot with metallic dissipation", 3.0],
+        ["TrackType: SFX, powerful sci-fi plasma rifle blaster shot with metallic electrical dissipation", 3.0],
+        ["TrackType: SFX, heavy thunderstorm with torrential rain pouring against a window and distant rolling thunder", 30.0],
         ["TrackType: SFX, classic cartoon boing spring bounce sound effect, comedic and bouncy", 3.0],
-        ["TrackType: SFX, heavy pneumatic spaceship airlock door depressurizing with a loud hiss", 6.0],
+        ["TrackType: SFX, heavy pneumatic spaceship airlock door depressurizing with a loud industrial hiss", 5.0],
+        ["TrackType: SFX, futuristic laser sword igniting with a sharp hum and vibrating idle buzz", 4.0],
+        ["TrackType: SFX, gentle ocean waves lapping against a pebbly beach with distant seagulls", 20.0],
+        ["TrackType: SFX, wooden door creaking slowly open in an eerie hallway followed by a heavy latch click", 5.0],
+        ["TrackType: SFX, vintage typewriter rapidly clacking with a carriage return bell ding", 6.0],
+        ["TrackType: SFX, bustling cozy coffee shop ambience with quiet chatter, clinking espresso cups, and background murmur", 20.0],
+        ["TrackType: SFX, deep cinematic impact sub-bass braam hit with long reverberant decay", 6.0],
     ]
 
     medium_examples = [
-        ["An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings", 15.0],
-        ["A soulful 70s funk groove with live brass section, slap bass, and vintage electric piano", 20.0],
-        ["Dreamy synthwave anthem with pulsating analog arpeggios, nostalgic pads, and gated drums", 20.0],
-        ["A dark industrial cyberpunk bassline with distorted synthesizer stabs and heavy driving kick", 15.0],
+        ["Massive cinematic sci-fi orchestral trailer theme with thundering timpani, colossal brass swells, and soaring strings", 30.0],
+        ["Ancient Nordic Viking folk music with resonant tagelharpa, bowed lyre, hypnotic shamanic frame drum, and deep vocal drone", 35.0],
+        ["80s retro synthwave outrun anthem with driving analog arpeggios, punchy gated reverb snare, and soaring guitar lead", 30.0],
+        ["Dark cyberpunk neo-noir soundtrack with solitary melancholic muted trumpet, deep sub-bass drone, and rainy neon city pads", 30.0],
+        ["Soulful 70s Motown funk with live brass section, warm Hammond B3 organ, rhythmic wah-wah guitar, and melodic bass", 30.0],
+        ["Epic fantasy highland soundtrack with evocative Celtic uilleann pipes, tin whistle, sweeping orchestral strings, and bodhrán", 35.0],
+        ["Melodic organic deep house with subtle marimba plucks, smooth round sub-bass, crisp shakers, and lush sunset beach reverb", 30.0],
+        ["Industrial darksynth action track with aggressive distorted reese bass, relentless driving kick, and piercing cybernetic alarms", 25.0],
+        ["Late night smoky noir jazz ballad with expressive tenor saxophone, brushed snare, and warm upright double bass", 30.0],
+        ["Deep space ambient meditation soundscape with evolving granular shimmer pads, zero-gravity drone, and ethereal harmonic resonances", 45.0],
+        ["Alternative 2000s post-grunge hard rock anthem with wall-of-sound distorted guitars, punchy arena drums, and soaring melody", 30.0],
+        ["Grand neoclassical piano and string quartet performing a dramatic, emotionally swelling minor-key waltz", 35.0],
     ]
 
     theme = gr.themes.Soft(
