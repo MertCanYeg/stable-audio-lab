@@ -68,27 +68,21 @@ div[class*="slider"] {
 TAB_CONFIG = [
     (
         "small-music",
-        "Music (433M)",
         "Describe the musical track: genre, instruments, mood, tempo...",
         "e.g. vocals, speech, harsh treble, distortion, low quality, muddy bass, background noise",
         "Optional: Suppress unwanted instruments, genres, vocal artifacts, or acoustic flaws.",
-        "🎧 **small-music** | Parameters: 433M | Disk Size: 3.22 GB | Max Duration: 120s | Audio: 44.1 kHz Stereo",
     ),
     (
         "small-sfx",
-        "Sound Effects (433M)",
         "TrackType: SFX, describe the sound effect or foley soundscape...",
         "e.g. music, melody, singing, synthesizer, speech, hum",
         "Optional: SFX models work best with natural prompts. Use negative prompt primarily to suppress music or speech.",
-        "🔊 **small-sfx** | Parameters: 433M | Disk Size: 3.22 GB | Max Duration: 120s | Audio: 44.1 kHz Stereo",
     ),
     (
         "medium",
-        "Cinema & Production (1.4B)",
         "Describe the cinematic music or high-fidelity sound design...",
         "e.g. clipping, distortion, low quality, noise, out of tune, artifacts",
         "Optional: Suppress specific acoustic flaws, distortion, or unwanted elements.",
-        "🎬 **medium** | Parameters: 1.4B | Disk Size: 9.69 GB | Max Duration: 380s | Audio: 44.1 kHz Stereo",
     ),
 ]
 
@@ -196,16 +190,15 @@ def reset_status():
 
 def build_model_tab(
     model_name: str,
-    tab_label: str,
     placeholder: str,
     neg_placeholder: str,
     neg_info: str,
-    banner_text: str,
 ):
     """Build UI layout and bindings for a specific model tab."""
     spec = MODELS[model_name]
 
-    gr.Markdown(banner_text)
+    banner = f"**{spec.name}** | Repo: `{spec.repo_id}` | Max Duration: {spec.max_duration:.0f}s | Audio: 44.1 kHz Stereo"
+    gr.Markdown(banner)
 
     with gr.Row():
         with gr.Column(scale=1):
@@ -251,7 +244,7 @@ def build_model_tab(
                 )
             with gr.Row():
                 generate_btn = gr.Button(
-                    f"✨ Generate with {tab_label}",
+                    f"✨ Generate with {model_name}",
                     variant="primary",
                     size="lg",
                     scale=4,
@@ -303,15 +296,13 @@ def create_app():
         gr.Markdown(f"*{get_device_info()}*")
 
         with gr.Tabs():
-            for model_name, tab_label, placeholder, neg_placeholder, neg_info, banner_text in TAB_CONFIG:
-                with gr.Tab(tab_label):
+            for model_name, placeholder, neg_placeholder, neg_info in TAB_CONFIG:
+                with gr.Tab(model_name):
                     build_model_tab(
                         model_name,
-                        tab_label,
                         placeholder,
                         neg_placeholder,
                         neg_info,
-                        banner_text,
                     )
 
     return demo

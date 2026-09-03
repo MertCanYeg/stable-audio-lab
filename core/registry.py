@@ -27,7 +27,7 @@ MODELS: dict[str, ModelSpec] = {
         default_prompt="Upbeat funky bassline with warm rhodes piano and crisp drums",
         default_duration=15.0,
         max_duration=120.0,
-        description="Stereo music generation (433M parameters, up to 120s).",
+        description="Stereo music generation (up to 120s).",
         examples=[
             ["Upbeat funky bassline with warm rhodes piano and crisp drums", 15.0],
             ["2000s alternative rock with heavy drop-tuned guitars, driving drums, and angsty melodic chorus", 30.0],
@@ -49,7 +49,7 @@ MODELS: dict[str, ModelSpec] = {
         default_prompt="TrackType: SFX, funny rubber clown nose squeak honk sound with double squeeze",
         default_duration=5.0,
         max_duration=120.0,
-        description="Sound effects and foley (433M parameters, up to 120s).",
+        description="Sound effects and foley generation (up to 120s).",
         examples=[
             ["TrackType: SFX, funny rubber clown nose squeak honk sound with double squeeze", 3.0],
             ["TrackType: SFX, deep campfire crackling and popping in a dense pine forest with gentle whistling night wind", 15.0],
@@ -71,7 +71,7 @@ MODELS: dict[str, ModelSpec] = {
         default_prompt="An epic cinematic orchestral trailer theme with thundering percussion, brass swells, and soaring strings",
         default_duration=15.0,
         max_duration=380.0,
-        description="Flagship quality model for music and sound design (1.4B parameters, up to 380s).",
+        description="Flagship quality model for music and sound design (up to 380s).",
         examples=[
             ["Massive cinematic sci-fi orchestral trailer theme with thundering timpani, colossal brass swells, and soaring strings", 30.0],
             ["Ancient Nordic Viking folk music with resonant tagelharpa, bowed lyre, hypnotic frame drum, and vocal drone", 35.0],

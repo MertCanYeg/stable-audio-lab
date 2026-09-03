@@ -9,9 +9,9 @@ Designed to run locally with NVIDIA GPU acceleration (via PyTorch + CUDA) or CPU
 ## ⚡ Highlights
 
 - **Model Family**: Stability AI's **Stable Audio 3**
-  - `small-music`: Stereo composition and music generation (433M, up to 120s)
-  - `small-sfx`: Sound effects and ambient audio generation (433M, up to 120s)
-  - `medium`: Unified flagship quality model for cinematic music and sound design (1.4B, up to 380s)
+  - `small-music`: Stereo composition and music generation (up to 120s)
+  - `small-sfx`: Sound effects and ambient audio generation (up to 120s)
+  - `medium`: Unified flagship quality model for cinematic music and sound design (up to 380s)
 - **100% Declarative & Portable**: Fully managed by [Pixi](https://pixi.sh). A single `pixi.lock` file guarantees identical builds on any computer.
 - **Hardware Accelerated**: Automatically utilizes NVIDIA GPUs (Tensor Cores / FP16) when available, while seamlessly supporting CPU fallback.
 - **Strict KISS & YAGNI Design**: Lean, flat, and professional-grade codebase with zero unnecessary boilerplate or wrappers.
@@ -66,7 +66,7 @@ pixi run generate --prompt "Upbeat funky bassline with warm rhodes piano and cri
 # Sound effect generation (small-sfx)
 pixi run generate --model small-sfx --prompt "Campfire crackling in a dense forest with gentle wind" --duration 10
 
-# High-fidelity flagship music (medium - 1.4B parameters)
+# High-fidelity music and sound design (medium)
 pixi run generate --model medium --prompt "An epic cinematic orchestral trailer theme with soaring strings" --duration 15
 ```
 
