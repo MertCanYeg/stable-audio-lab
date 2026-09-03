@@ -27,6 +27,22 @@ except ImportError:
     except Exception:
         pass
 
+# Silence harmless Windows asyncio ConnectionResetError [WinError 10054] when browser finishes or refreshes stream
+if sys.platform == "win32":
+    try:
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+        def _patched_call_connection_lost(self, exc):
+            try:
+                _orig_call_connection_lost(self, exc)
+            except ConnectionResetError:
+                pass
+
+        _ProactorBasePipeTransport._call_connection_lost = _patched_call_connection_lost
+    except Exception:
+        pass
+
 # Load .env file for HF token
 load_dotenv()
 
