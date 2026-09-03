@@ -1,274 +1,297 @@
 #!/usr/bin/env python3
-"""Interactive Multi-Model Tabbed Studio for Stable Audio 3."""
+"""Interactive Web Studio for Stable Audio 3."""
 
 import argparse
-import sys
+import functools
+import gc
+import queue
+import threading
 from dotenv import load_dotenv
-
-# Load environment & tokens
-load_dotenv()
-
 import gradio as gr
 import torch
 
-from core.compat import init_platform_compat, get_device_banner
-from core.engine import generate_audio_stream
-from core.registry import MODELS, ModelSpec, get_model_spec
-from core.storage import check_model_cache, download_model
+load_dotenv()
 
-# Apply runtime compatibility patches (Triton fallback, asyncio reset, warning filters)
-init_platform_compat()
+from core import MODELS, GenerationConfig, StableAudioError, generate_audio, get_device_info
+
+CUSTOM_CSS = """
+.gradio-container {
+    max-width: 1200px !important;
+    margin: 0 auto !important;
+}
+.table-wrap {
+    max-height: 280px !important;
+    overflow-y: auto !important;
+}
+.model-info-banner {
+    padding: 8px 14px;
+    border-radius: 6px;
+    background-color: var(--background-fill-secondary);
+    margin-bottom: 12px;
+    font-size: 0.9em;
+}
+"""
+
+TAB_CONFIG = [
+    (
+        "small-music",
+        "Music (433M)",
+        "Describe the musical track: genre, instruments, mood, tempo...",
+        "e.g. vocals, speech, harsh treble, distortion, low quality, muddy bass, background noise",
+        "Optional: Suppress unwanted instruments, genres, vocal artifacts, or acoustic flaws.",
+        "🎧 **small-music** | Parameters: 433M | Disk Size: 3.22 GB | Max Duration: 120s | Audio: 44.1 kHz Stereo",
+    ),
+    (
+        "small-sfx",
+        "Sound Effects (433M)",
+        "TrackType: SFX, describe the sound effect or foley soundscape...",
+        "e.g. music, melody, singing, synthesizer, speech, hum",
+        "Optional: SFX models work best with natural prompts. Use negative prompt primarily to suppress music or speech.",
+        "🔊 **small-sfx** | Parameters: 433M | Disk Size: 3.22 GB | Max Duration: 120s | Audio: 44.1 kHz Stereo",
+    ),
+    (
+        "medium",
+        "Cinema & Production (1.4B)",
+        "Describe the cinematic music or high-fidelity sound design...",
+        "e.g. clipping, distortion, low quality, noise, out of tune, artifacts",
+        "Optional: Suppress specific acoustic flaws, distortion, or unwanted elements.",
+        "🎬 **medium** | Parameters: 1.4B | Disk Size: 9.69 GB | Max Duration: 380s | Audio: 44.1 kHz Stereo",
+    ),
+]
 
 
-def build_generation_tab(spec: ModelSpec):
-    """Construct a clean, responsive generation interface for a specific model."""
-    init_status = check_model_cache(spec.name)
-    is_ready = init_status["downloaded"]
-
-    # Model status & quick-download action bar
-    with gr.Row(variant="panel"):
-        status_badge = gr.Markdown(
-            f"🟢 **Installed** ({init_status['size_gb']:.2f} GB) • {spec.note}"
-            if is_ready
-            else f"🟠 **Weights not downloaded** ({spec.approx_size} required) • Click **Download Weights** or **Generate Audio** to fetch."
-        )
-        dl_btn = gr.Button(
-            "📥 Download Weights",
-            variant="secondary",
-            size="sm",
-            scale=0,
-            visible=not is_ready,
-        )
-
-    def on_tab_download(progress=gr.Progress(track_tqdm=False)):
-        def cb(pct, desc):
-            progress(pct, desc=desc)
-
-        print(f"\n📥 [UI Action] Starting download for '{spec.name}'...")
-        success = download_model(spec.name, progress_callback=cb)
-        new_st = check_model_cache(spec.name)
-        if success and new_st["downloaded"]:
-            gr.Info(f"Model '{spec.name}' downloaded and verified successfully!")
-            return (
-                f"🟢 **Installed** ({new_st['size_gb']:.2f} GB) • {spec.note}",
-                gr.update(visible=False),
-            )
-        else:
-            raise gr.Error(f"Could not complete {spec.name} download. Check your connection or HF_TOKEN.")
-
-    dl_btn.click(
-        fn=on_tab_download,
-        outputs=[status_badge, dl_btn],
-        concurrency_id="download_worker",
-        concurrency_limit=1,
+def generate(
+    model_name: str,
+    prompt: str,
+    negative_prompt: str,
+    duration: float,
+    steps: int,
+    cfg: float,
+    seed: int,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Generate audio with live streaming status, interactive UI sampling bar, and error recovery."""
+    config = GenerationConfig(
+        model_name=model_name,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        duration=duration,
+        steps=steps,
+        cfg_scale=cfg,
+        seed=seed,
     )
 
+    q = queue.Queue()
+    logs = [f"⏳ Initializing generation with '{model_name}'..."]
+    yield None, logs[0]
+
+    def on_status(msg: str):
+        q.put(("status", msg))
+
+    def worker():
+        try:
+            result = generate_audio(
+                config=config,
+                progress=progress,
+                status_callback=on_status,
+            )
+            q.put(("done", result))
+        except Exception as e:
+            q.put(("error", e))
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    active_sampling_bar = None
+
+    while True:
+        try:
+            event_type, payload = q.get(timeout=0.05)
+        except queue.Empty:
+            if not thread.is_alive() and q.empty():
+                break
+            continue
+
+        if event_type == "status":
+            if payload.startswith("[sampling]"):
+                active_sampling_bar = payload
+            else:
+                logs.append(payload)
+                active_sampling_bar = None
+
+            display_text = "\n".join(logs)
+            if active_sampling_bar:
+                display_text = f"{display_text}\n{active_sampling_bar}"
+            yield None, display_text
+
+        elif event_type == "done":
+            summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
+            yield payload.output_path, summary_display
+            break
+
+        elif event_type == "error":
+            err = payload
+            if isinstance(err, StableAudioError):
+                err_msg = f"❌ Error: {err}"
+                yield None, f"{chr(10).join(logs)}\n\n{err_msg}"
+                raise gr.Error(str(err)) from err
+            elif isinstance(err, torch.cuda.OutOfMemoryError):
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                oom_msg = (
+                    f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
+                    f"Try reducing duration or switching to a smaller model."
+                )
+                yield None, f"{chr(10).join(logs)}\n\n{oom_msg}"
+                raise gr.Error(oom_msg) from err
+            else:
+                err_msg = f"❌ Generation failed: {err}"
+                yield None, f"{chr(10).join(logs)}\n\n{err_msg}"
+                raise gr.Error(f"Generation failed: {err}") from err
+
+
+def reset_status():
+    """Reset the status textbox to ready state."""
+    return None, "Ready to generate."
+
+
+def build_model_tab(
+    model_name: str,
+    tab_label: str,
+    placeholder: str,
+    neg_placeholder: str,
+    neg_info: str,
+    banner_text: str,
+):
+    """Build UI layout and bindings for a specific model tab."""
+    spec = MODELS[model_name]
+
+    gr.Markdown(banner_text)
+
     with gr.Row():
-        with gr.Column(scale=5):
-            prompt_input = gr.Textbox(
+        with gr.Column(scale=3):
+            prompt = gr.Textbox(
                 label="Prompt",
                 value=spec.default_prompt,
                 lines=3,
-                placeholder="Describe the audio you want to generate...",
+                placeholder=placeholder,
+            )
+            negative_prompt = gr.Textbox(
+                label="Negative Prompt",
+                lines=1,
+                placeholder=neg_placeholder,
+                info=neg_info,
             )
             with gr.Row():
-                duration_slider = gr.Slider(
-                    minimum=1.0,
-                    maximum=spec.max_duration,
-                    value=spec.default_duration,
-                    step=1.0,
+                duration = gr.Slider(
+                    minimum=1,
+                    maximum=int(spec.max_duration),
+                    value=int(spec.default_duration),
+                    step=1,
                     label="Duration (seconds)",
                 )
-                steps_slider = gr.Slider(
+                steps = gr.Slider(
                     minimum=4,
                     maximum=50,
                     value=8,
                     step=1,
-                    label="Sampling Steps (8 is optimal)",
+                    label="Sampling Steps",
+                )
+                cfg = gr.Slider(
+                    minimum=1.0,
+                    maximum=15.0,
+                    value=1.0,
+                    step=0.5,
+                    label="CFG Scale",
+                )
+                seed = gr.Number(
+                    value=-1,
+                    precision=0,
+                    label="Seed (-1 = random)",
+                )
+            with gr.Row():
+                generate_btn = gr.Button(
+                    f"Generate with {tab_label}",
+                    variant="primary",
+                    size="lg",
+                    scale=4,
+                )
+                clear_btn = gr.Button(
+                    "Clear Output",
+                    variant="secondary",
+                    size="lg",
+                    scale=1,
                 )
 
-            with gr.Accordion("Advanced Settings", open=False):
-                negative_prompt_input = gr.Textbox(
-                    label="Negative Prompt",
-                    placeholder="Describe sounds or artifacts to avoid...",
-                    lines=1,
-                )
-                with gr.Row():
-                    cfg_scale_slider = gr.Slider(
-                        minimum=1.0,
-                        maximum=15.0,
-                        value=1.0,
-                        step=0.5,
-                        label="CFG Scale",
-                    )
-                    seed_input = gr.Number(
-                        label="Seed (-1 for random)",
-                        value=-1,
-                        precision=0,
-                    )
-
-            generate_btn = gr.Button("⚡ Generate Audio", variant="primary", size="lg")
-
-        with gr.Column(scale=4):
-            audio_output = gr.Audio(
-                label="Generated Audio",
-                type="filepath",
+        with gr.Column(scale=2):
+            output_audio = gr.Audio(label="Generated Audio", type="filepath")
+            status = gr.Textbox(
+                label="Generation Status & Telemetry",
+                value="Ready to generate.",
                 interactive=False,
-                waveform_options=gr.WaveformOptions(
-                    show_recording_waveform=False,
-                    waveform_color="#3b82f6",
-                    waveform_progress_color="#1d4ed8",
-                ),
+                lines=8,
+                max_lines=16,
             )
-            status_output = gr.Markdown("Ready to generate.")
-
-    # Inspiration Presets
-    if spec.examples:
-        if isinstance(spec.examples, dict):
-            with gr.Tabs():
-                for cat_label, cat_items in spec.examples.items():
-                    with gr.Tab(cat_label):
-                        gr.Examples(
-                            examples=cat_items,
-                            inputs=[prompt_input, duration_slider],
-                            examples_per_page=25,
-                            label="Presets",
-                        )
-        else:
-            gr.Examples(
-                examples=spec.examples,
-                inputs=[prompt_input, duration_slider],
-                examples_per_page=25,
-                label="Presets",
-            )
-
-    def on_generate(p, np_prompt, dur, st, cfg, sd, progress=gr.Progress(track_tqdm=False)):
-        for out_file, status in generate_audio_stream(
-            model_name=spec.name,
-            prompt=p,
-            negative_prompt=np_prompt,
-            duration=dur,
-            steps=st,
-            cfg_scale=cfg,
-            seed=sd,
-            progress=progress,
-        ):
-            yield out_file, status
 
     generate_btn.click(
-        fn=on_generate,
-        inputs=[
-            prompt_input,
-            negative_prompt_input,
-            duration_slider,
-            steps_slider,
-            cfg_scale_slider,
-            seed_input,
-        ],
-        outputs=[audio_output, status_output],
-        show_progress="minimal",
-        concurrency_id="gpu_worker",
-        concurrency_limit=1,
+        fn=functools.partial(generate, model_name),
+        inputs=[prompt, negative_prompt, duration, steps, cfg, seed],
+        outputs=[output_audio, status],
     )
 
+    clear_btn.click(
+        fn=reset_status,
+        inputs=[],
+        outputs=[output_audio, status],
+    )
 
-def build_diagnostics_tab():
-    """Construct hardware and model cache diagnostics tab."""
-    gr.Markdown("### 🖥️ Hardware & Environment")
-    gr.Markdown(f"""
-- **Active GPU**: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None (CPU)'}
-- **PyTorch Version**: `{torch.__version__}`
-- **CUDA Runtime**: `{torch.version.cuda if torch.cuda.is_available() else 'N/A'}`
-- **Audio Output Directory**: `outputs/`
-    """)
-
-    gr.Markdown("### 📦 Installed Models & Local Cache")
-    table_lines = [
-        "| Model | Status | Size on Disk | Parameters | Max Duration | Repository |",
-        "| :--- | :---: | :---: | :---: | :---: | :--- |",
-    ]
-    for name, spec in MODELS.items():
-        st = check_model_cache(name)
-        status_icon = "🟢 Installed" if st["downloaded"] else "⚪ Not Downloaded"
-        size_str = f"{st['size_gb']:.2f} GB" if st["downloaded"] else "—"
-        table_lines.append(
-            f"| **{name}** | {status_icon} | {size_str} | {spec.parameters} | {spec.max_duration:.0f}s | [`{spec.repo_id}`](https://huggingface.co/{spec.repo_id}) |"
+    if spec.examples:
+        gr.Markdown("#### Prompt Templates *(click any row to load)*")
+        gr.Examples(
+            examples=spec.examples,
+            inputs=[prompt, duration],
+            examples_per_page=100,
         )
 
-    gr.Markdown("\n".join(table_lines))
 
+def create_app():
+    """Create the root Gradio Blocks application."""
+    with gr.Blocks(title="Stable Audio Lab") as demo:
+        gr.Markdown("# Stable Audio Lab")
+        gr.Markdown(f"*{get_device_info()}*")
 
-def create_app(model_mode: str = "all"):
-    """Create the Gradio Blocks application."""
-    theme = gr.themes.Soft(
-        primary_hue="indigo",
-        secondary_hue="blue",
-        neutral_hue="slate",
-    )
-
-    with gr.Blocks(title="Stable Audio Lab Studio") as demo:
-        gr.Markdown("# 🎧 Stable Audio Lab Studio")
-        gr.Markdown(get_device_banner())
-
-        if model_mode == "all":
-            with gr.Tabs():
-                for name, spec in MODELS.items():
-                    with gr.Tab(spec.display_name):
-                        build_generation_tab(spec)
-                with gr.Tab("ℹ️ System Diagnostics"):
-                    build_diagnostics_tab()
-        else:
-            spec = get_model_spec(model_mode)
-            gr.Markdown(f"### {spec.display_name}")
-            build_generation_tab(spec)
+        with gr.Tabs():
+            for model_name, tab_label, placeholder, neg_placeholder, neg_info, banner_text in TAB_CONFIG:
+                with gr.Tab(tab_label):
+                    build_model_tab(
+                        model_name,
+                        tab_label,
+                        placeholder,
+                        neg_placeholder,
+                        neg_info,
+                        banner_text,
+                    )
 
     return demo
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Launch Stable Audio Lab Gradio Web Studio",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--model",
-        "-m",
-        type=str,
-        default="all",
-        choices=["all"] + list(MODELS.keys()),
-        help="Launch with all switchable model tabs ('all'), or specify a single model",
-    )
-    parser.add_argument(
-        "--port",
-        "-p",
-        type=int,
-        default=7860,
-        help="Local port for the Gradio web server",
-    )
-    parser.add_argument(
-        "--host",
-        type=str,
-        default="127.0.0.1",
-        help="Server host/IP to bind",
-    )
-    parser.add_argument(
-        "--share",
-        action="store_true",
-        help="Create a public Gradio share link",
-    )
-
+    parser = argparse.ArgumentParser(description="Launch Stable Audio Lab Web UI")
+    parser.add_argument("--port", "-p", type=int, default=7860)
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--share", action="store_true")
     args = parser.parse_args()
 
-    app = create_app(model_mode=args.model)
-    app.queue(default_concurrency_limit=1)
-    app.launch(
+    demo = create_app()
+    demo.launch(
         server_name=args.host,
         server_port=args.port,
         share=args.share,
         inbrowser=True,
+        css=CUSTOM_CSS,
     )
-    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -1,6 +1,6 @@
 # Stable Audio Lab
 
-A modern, reproducible, and portable workspace for **Stable Audio 3 Small** (`small-music` and `small-sfx`) powered by **Pixi**.
+A modern, reproducible, and portable workspace for **Stable Audio 3** (`small-music`, `small-sfx`, and `medium`) powered by **Pixi**.
 
 Designed to run locally with NVIDIA GPU acceleration (via PyTorch + CUDA) or CPU fallback, with zero global environment pollution.
 
@@ -8,15 +8,18 @@ Designed to run locally with NVIDIA GPU acceleration (via PyTorch + CUDA) or CPU
 
 ## ⚡ Highlights
 
-- **Model Family**: Stability AI's **Stable Audio 3 Small** (433M parameters)
-  - `small-music`: Composition and music generation (up to 120s)
-  - `small-sfx`: Sound effects and ambient audio generation (up to 120s)
+- **Model Family**: Stability AI's **Stable Audio 3**
+  - `small-music`: Stereo composition and music generation (433M, up to 120s)
+  - `small-sfx`: Sound effects and ambient audio generation (433M, up to 120s)
+  - `medium`: Unified flagship quality model for cinematic music and sound design (1.4B, up to 380s)
 - **100% Declarative & Portable**: Fully managed by [Pixi](https://pixi.sh). A single `pixi.lock` file guarantees identical builds on any computer.
 - **Hardware Accelerated**: Automatically utilizes NVIDIA GPUs (Tensor Cores / FP16) when available, while seamlessly supporting CPU fallback.
+- **Strict KISS & YAGNI Design**: Lean, flat, and professional-grade codebase with zero unnecessary boilerplate or wrappers.
 - **Flexible Interfaces**:
   - **CLI**: Fast scriptable generation (`pixi run generate`)
-  - **Web UI**: Interactive Gradio app with waveforms and spectrograms (`pixi run ui`)
+  - **Web UI**: Interactive Gradio studio with waveforms and presets (`pixi run ui`)
   - **Diagnostics**: Built-in environment & GPU verification (`pixi run check-env`)
+  - **Download Manager**: Cache inspection and pre-download manager (`pixi run download-models`)
 
 ---
 
@@ -31,6 +34,7 @@ Designed to run locally with NVIDIA GPU acceleration (via PyTorch + CUDA) or CPU
    2. Accept the model license terms:
       - [stabilityai/stable-audio-3-small-music](https://huggingface.co/stabilityai/stable-audio-3-small-music)
       - [stabilityai/stable-audio-3-small-sfx](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)
+      - [stabilityai/stable-audio-3-medium](https://huggingface.co/stabilityai/stable-audio-3-medium)
    3. Create an Access Token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
    4. Copy `.env.example` to `.env` and paste your token:
       ```bash
@@ -47,7 +51,13 @@ Check that PyTorch detects your GPU and verifies Hugging Face authentication:
 pixi run check-env
 ```
 
-### 2. Generate Audio via CLI
+### 2. Run Automated Test Suite
+Verify that all core modules, prompt sanitization, model registries, and storage validators are operational:
+```bash
+pixi run test
+```
+
+### 3. Generate Audio via CLI
 Generate high-fidelity stereo audio in seconds:
 ```bash
 # Music generation (small-music)
@@ -60,23 +70,14 @@ pixi run generate --model small-sfx --prompt "Campfire crackling in a dense fore
 pixi run generate --model medium --prompt "An epic cinematic orchestral trailer theme with soaring strings" --duration 15
 ```
 
-All generated `.wav` files are automatically timestamped and saved to the `outputs/` directory.
+All generated `.wav` files are automatically timestamped, slugified, and saved to the `outputs/` directory in standard 16-bit PCM CD-quality format. The exact seed used is displayed in the terminal so you can reproduce any track.
 
-### 3. Launch Interactive Web Studio
+### 4. Launch Interactive Web Studio
 Start the local Gradio studio in your web browser:
 ```bash
-# Default: Launches with switchable tabs (🎵 Music + 🔊 Sound Effects + 🎛️ Medium + ℹ️ Diagnostics)
 pixi run ui
-
-# Single-model mode: Launch exclusively with a single model
-pixi run ui --model small-music
-pixi run ui --model small-sfx
-pixi run ui --model medium
 ```
 Open `http://127.0.0.1:7860` in your browser.
-
-> 💡 **Memory Management:**
-> On Windows (WDDM), the NVIDIA driver automatically provides Shared GPU Memory from system RAM. If a generation requires more memory than dedicated physical VRAM, the driver transparently pages into system RAM rather than raising an out-of-memory error.
 
 ---
 
@@ -87,30 +88,30 @@ Open `http://127.0.0.1:7860` in your browser.
 | `--prompt` | `-p` | *required* | Text description of the audio |
 | `--negative-prompt`| `-n` | `None` | Qualities or sounds to avoid |
 | `--model` | `-m` | `small-music` | Model variant: `small-music`, `small-sfx`, or `medium` |
-| `--duration` | `-d` | `30.0` | Output duration in seconds (Small: up to 120s, Medium: up to 380s) |
+| `--duration` | `-d` | `15.0` | Output duration in seconds (Small: up to 120s, Medium: up to 380s) |
 | `--steps` | `-s` | `8` | Diffusion sampling steps (8 is optimal for post-trained models) |
-| `--seed` | | `-1` | Seed for reproducibility (`-1` for random) |
+| `--cfg-scale` | | `1.0` | Classifier-free guidance scale |
+| `--seed` | | `-1` | Seed for reproducibility (`-1` for random; seed is logged) |
 | `--output` | `-o` | `None` | Custom path to save the output `.wav` file |
-| `--no-half` | | `False` | Force float32 precision instead of fp16 |
 
 ---
 
 ## 📦 Pre-Downloading Models (Optional)
 
-If you prefer to pre-download model weights from the terminal with progress bars before opening the UI:
+If you prefer to inspect or pre-download model weights from the terminal:
 
 ```bash
 # Check cache status of all models
 pixi run download-models --status
 
-# Pre-download all models (~16 GB total)
+# Pre-download all models
 pixi run download-models
 
 # Pre-download a specific model
-pixi run python download_models.py --model medium
+pixi run download-models --model medium
 ```
 
-Within the Gradio Web Studio (`pixi run ui`), each model tab also displays a live **Model Status** badge and a one-click download button with real-time progress bars.
+Within the Gradio Web Studio (`pixi run ui`), the interface displays a live **Model Status** badge and a one-click download button.
 
 ---
 
@@ -119,13 +120,14 @@ Within the Gradio Web Studio (`pixi run ui`), each model tab also displays a liv
 ```
 stable-audio-lab/
 ├── core/                  # Clean, modular engine & utilities
-│   ├── compat.py          # Platform & hardware compatibility (Triton fallback, asyncio, Win32 RAM)
-│   ├── registry.py        # Single source of truth for model specifications & presets
-│   ├── storage.py         # Checkpoint integrity validation & self-healing downloads
-│   └── engine.py          # VRAM cache management, inference pipeline & audio export
-├── app.py                 # Gradio Web Studio with in-tab model manager & read-only diagnostics
-├── generate.py            # Lean CLI generation tool
-├── download_models.py     # Terminal model pre-download manager
+│   ├── compat.py          # Platform & environment setup (UTF-8 stdout, warning filters, Triton fallback)
+│   ├── registry.py        # Model specifications, durations, and curated presets
+│   ├── storage.py         # Hugging Face Hub caching and download helpers
+│   └── engine.py          # VRAM cache hygiene, reproducible inference & 16-bit PCM WAV export
+├── tests/                 # Automated unit tests (slugify, registry, compat, storage, validation)
+├── app.py                 # Gradio Web Studio with unified model selector & native progress
+├── generate.py            # Lean CLI generation tool with tqdm progress & seed capture
+├── download_models.py     # Terminal model cache inspector & pre-download tool
 ├── check_env.py           # Hardware & authentication diagnostic script
 ├── pixi.toml              # Declarative environment & tasks definition
 ├── pixi.lock              # Cross-platform dependency lockfile
