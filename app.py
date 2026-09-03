@@ -14,14 +14,31 @@ load_dotenv()
 
 from core import MODELS, GenerationConfig, StableAudioError, generate_audio, get_device_info
 
+AUTO_SCROLL_JS = """
+() => {
+    const observer = new MutationObserver(() => {
+        document.querySelectorAll('.status-console textarea').forEach(el => {
+            el.scrollTop = el.scrollHeight;
+        });
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+"""
+
 CUSTOM_CSS = """
 .gradio-container {
-    max-width: 1200px !important;
+    max-width: 1360px !important;
     margin: 0 auto !important;
 }
 .table-wrap {
     max-height: 280px !important;
     overflow-y: auto !important;
+    border-radius: 6px !important;
+    border: 1px solid var(--border-color-primary) !important;
+}
+.table-wrap tr:hover {
+    background-color: var(--background-fill-secondary) !important;
+    cursor: pointer !important;
 }
 .model-info-banner {
     padding: 8px 14px;
@@ -30,14 +47,21 @@ CUSTOM_CSS = """
     margin-bottom: 12px;
     font-size: 0.9em;
 }
+div[class*="slider"] {
+    overflow-x: hidden !important;
+}
 .status-console textarea {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
-    font-size: 0.84rem !important;
+    font-size: 0.78rem !important;
     line-height: 1.45 !important;
     background-color: #0d1117 !important;
     color: #e6edf3 !important;
     border: 1px solid #30363d !important;
     border-radius: 6px !important;
+    height: 270px !important;
+    white-space: pre !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
 }
 """
 
@@ -139,7 +163,7 @@ def generate(
             yield None, display_text
 
         elif event_type == "done":
-            summary_display = f"✅ {payload.status_message}\n\n" + "\n".join(logs)
+            summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
             yield payload.output_path, summary_display
             break
 
@@ -274,6 +298,7 @@ def build_model_tab(
 def create_app():
     """Create the root Gradio Blocks application."""
     with gr.Blocks(title="Stable Audio Lab") as demo:
+        demo.load(None, js=AUTO_SCROLL_JS)
         gr.Markdown("# Stable Audio Lab")
         gr.Markdown(f"*{get_device_info()}*")
 

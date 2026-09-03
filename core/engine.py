@@ -99,6 +99,13 @@ class GenerationResult(NamedTuple):
         return iter((self.output_path, self.status_message))
 
 
+def _emit_log(msg: str, status_cb: Optional[Callable[[str], None]] = None) -> None:
+    """Print to stdout and notify status callback with identical message."""
+    print(msg)
+    if status_cb:
+        status_cb(msg)
+
+
 def load_model(
     model_name: str,
     use_half: bool = True,
@@ -107,10 +114,8 @@ def load_model(
 ):
     """Load model weights into GPU memory with granular stage-by-stage progress reporting."""
     if model_name in _MODEL_CACHE:
-        cached_msg = f"[load_model] Using cached '{model_name}' ({'fp16' if use_half and torch.cuda.is_available() else 'fp32'})."
-        print(cached_msg)
-        if status_callback:
-            status_callback(cached_msg)
+        cached_msg = f"[load] Using cached '{model_name}' ({'fp16' if use_half and torch.cuda.is_available() else 'fp32'})."
+        _emit_log(cached_msg, status_callback)
         return _MODEL_CACHE[model_name]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -120,10 +125,8 @@ def load_model(
     # Evict previous model if switching
     if _MODEL_CACHE:
         prev_name = next(iter(_MODEL_CACHE))
-        evict_msg = f"[load_model] Evicting '{prev_name}' from memory to load '{model_name}'..."
-        print(evict_msg)
-        if status_callback:
-            status_callback(evict_msg)
+        evict_msg = f"[load] Evicting '{prev_name}' from memory to load '{model_name}'..."
+        _emit_log(evict_msg, status_callback)
         _MODEL_CACHE.clear()
         gc.collect()
         if torch.cuda.is_available():
@@ -143,70 +146,50 @@ def load_model(
     t0 = time.time()
 
     # Stage 1: Architecture & T5 conditioner
-    stage1_msg = f"[load_model] [1/4] Building '{model_name}' architecture and text encoder..."
+    stage1_msg = f"[load] [1/4] Building '{model_name}' architecture & text encoder..."
     if progress:
         progress(0.0, desc=stage1_msg)
-    print(stage1_msg)
-    if status_callback:
-        status_callback(stage1_msg)
+    _emit_log(stage1_msg, status_callback)
     model = create_diffusion_cond_from_config(model_config)
 
     # Stage 2: Reading safetensors weights from disk
-    stage2_start = f"[load_model] [2/4] Reading safetensors weights from disk..."
     if progress:
-        progress(0.0, desc=stage2_start)
-    if status_callback:
-        status_callback(stage2_start)
+        progress(0.0, desc=f"[load] [2/4] Reading safetensors weights from disk...")
     t_read = time.time()
     sd = load_file(ckpt_path)
-    stage2_done = f"[load_model] [2/4] Read {len(sd)} weight tensors from disk in {time.time()-t_read:.2f}s."
-    print(stage2_done)
-    if status_callback:
-        status_callback(stage2_done)
+    stage2_done = f"[load] [2/4] Read {len(sd)} weights from disk in {time.time()-t_read:.2f}s."
+    _emit_log(stage2_done, status_callback)
 
     # Stage 3: Mapping state dict
-    stage3_start = f"[load_model] [3/4] Mapping {len(sd)} weights into model..."
     if progress:
-        progress(0.0, desc=stage3_start)
-    if status_callback:
-        status_callback(stage3_start)
+        progress(0.0, desc=f"[load] [3/4] Mapping weights into model...")
     t_copy = time.time()
     copy_state_dict(model, sd)
-    stage3_done = f"[load_model] [3/4] Mapped {len(sd)} weights in {time.time()-t_copy:.2f}s."
-    print(stage3_done)
-    if status_callback:
-        status_callback(stage3_done)
+    stage3_done = f"[load] [3/4] Mapped {len(sd)} weights in {time.time()-t_copy:.2f}s."
+    _emit_log(stage3_done, status_callback)
     del sd
     gc.collect()
 
     # Stage 4: Transfer to device
-    stage4_start = f"[load_model] [4/4] Transferring weights to {device.upper()} ({precision})..."
+    stage4_start = f"[load] [4/4] Transferring weights to {device.upper()} ({precision})..."
     if progress:
         progress(0.0, desc=stage4_start)
-    print(stage4_start)
-    if status_callback:
-        status_callback(stage4_start)
     t_xfer = time.time()
     model.to(device).eval().requires_grad_(False)
     if half:
         model.to(torch.float16)
-    stage4_done = f"[load_model] [4/4] Transferred to {device.upper()} in {time.time()-t_xfer:.2f}s."
-    print(stage4_done)
-    if status_callback:
-        status_callback(stage4_done)
+    stage4_done = f"[load] [4/4] Transferred to {device.upper()} in {time.time()-t_xfer:.2f}s."
+    _emit_log(stage4_done, status_callback)
 
     wrapped = StableAudioModel(model, model_config, device, half)
     wrapped.use_lora = False
     wrapped.lora_names = []
 
     elapsed = time.time() - t0
-    load_done = f"[load_model] Loaded '{model_name}' in {elapsed:.2f}s."
-    print(load_done)
     mem_summary = _gpu_mem_summary() if torch.cuda.is_available() else ""
-    if mem_summary:
-        print(f"[load_model] {mem_summary}")
-    if status_callback:
-        status_callback(f"{load_done} ({mem_summary})" if mem_summary else load_done)
+    mem_str = f" ({mem_summary})" if mem_summary else ""
+    load_done = f"[load] Loaded '{model_name}' in {elapsed:.2f}s{mem_str}."
+    _emit_log(load_done, status_callback)
 
     _MODEL_CACHE[model_name] = wrapped
     return wrapped
@@ -254,12 +237,15 @@ def generate_audio(
     # Terminal: log full generation parameters with single-line whitespace normalization
     prompt_display = " ".join(prompt_clean.split())
     print(f"\n{'=' * 60}")
-    print(f"[generate] model={cfg.model_name} duration={cfg.duration:.1f}s steps={total_steps} "
-          f"cfg={cfg.cfg_scale} seed={resolved_seed}")
-    print(f"[generate] prompt=\"{prompt_display}\"")
+    _emit_log(
+        f"[generate] model={cfg.model_name} duration={cfg.duration:.1f}s steps={total_steps} "
+        f"cfg={cfg.cfg_scale} seed={resolved_seed}",
+        status_callback,
+    )
+    _emit_log(f"[generate] prompt=\"{prompt_display}\"", status_callback)
     if neg:
         neg_display = " ".join(neg.split())
-        print(f"[generate] negative=\"{neg_display}\"")
+        _emit_log(f"[generate] negative=\"{neg_display}\"", status_callback)
     print(f"{'=' * 60}")
 
     with _INFERENCE_LOCK:
@@ -276,9 +262,7 @@ def generate_audio(
         if progress:
             progress(0.0, desc="Encoding text prompt with T5 conditioning...")
         encode_msg = f"[generate] Encoding prompt and starting diffusion sampling ({total_steps} steps)..."
-        print(encode_msg)
-        if status_callback:
-            status_callback(encode_msg)
+        _emit_log(encode_msg, status_callback)
 
         pbar = None
         sample_start = time.time()
@@ -299,18 +283,18 @@ def generate_audio(
             if step_callback:
                 step_callback(current, total_steps)
 
-            # Live UI status & sampling progress bar callback
+            # Live UI status & sampling progress bar callback (compact 12-char bar)
             if status_callback:
                 elapsed = time.time() - sample_start
                 speed = current / elapsed if elapsed > 0 else 0.0
                 eta = (total_steps - current) / speed if speed > 0 else 0.0
                 pct = int((current / total_steps) * 100)
-                bar_len = 20
+                bar_len = 12
                 filled = int(bar_len * current / total_steps)
                 bar = "█" * filled + "░" * (bar_len - filled)
                 status_callback(
-                    f"[sampling] Step {current}/{total_steps} ({pct}%) | [{bar}] | "
-                    f"{speed:.1f} steps/s (ETA: {eta:.1f}s)"
+                    f"[sampling] Step {current}/{total_steps} ({pct}%) [{bar}] "
+                    f"{speed:.1f} st/s (ETA: {eta:.0f}s)"
                 )
 
             # Gradio progress tracking
@@ -335,13 +319,13 @@ def generate_audio(
             f"[generate] Sampling completed in {sample_elapsed:.2f}s "
             f"({total_steps / sample_elapsed:.1f} steps/s)"
         )
-        print(f"\n{sample_done_msg}")
-        if status_callback:
-            status_callback(f"{sample_done_msg}\n[generate] Decoding audio latents and saving WAV...")
+        print()
+        _emit_log(sample_done_msg, status_callback)
 
         # Stage 3: Decode latents and export WAV
         if progress:
             progress(None, desc="Decoding audio latents and saving WAV...")
+        _emit_log("[generate] Decoding audio latents and saving WAV...", status_callback)
         decode_start = time.time()
 
         if cfg.output_path:
@@ -375,14 +359,20 @@ def generate_audio(
         total_elapsed = time.time() - start_time
         speed = round(total_steps / total_elapsed, 1) if total_elapsed > 0 else 0.0
 
-        # Terminal: detailed timing breakdown
-        print(f"[generate] Decoded and saved in {decode_elapsed:.2f}s")
-        print(f"[generate] Output: {out_file} "
-              f"({_format_bytes(file_size)}, {channels}ch, {sample_rate}Hz, PCM_16)")
+        # Synchronized telemetry breakdown
+        _emit_log(f"[generate] Decoded and saved in {decode_elapsed:.2f}s", status_callback)
+        _emit_log(
+            f"[generate] Output: {out_file.name} "
+            f"({_format_bytes(file_size)}, {channels}ch, {sample_rate}Hz, PCM_16)",
+            status_callback,
+        )
         if torch.cuda.is_available():
-            print(f"[generate] {_gpu_mem_summary()}")
-        print(f"[generate] Total: {total_elapsed:.2f}s "
-              f"(load={load_elapsed:.1f}s, sample={sample_elapsed:.1f}s, decode={decode_elapsed:.1f}s)")
+            _emit_log(f"[generate] {_gpu_mem_summary()}", status_callback)
+        _emit_log(
+            f"[generate] Total: {total_elapsed:.2f}s "
+            f"(load={load_elapsed:.1f}s, sample={sample_elapsed:.1f}s, decode={decode_elapsed:.1f}s)",
+            status_callback,
+        )
         print(f"{'=' * 60}\n")
 
         # UI status: clean user-facing summary
