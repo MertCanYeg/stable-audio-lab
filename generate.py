@@ -57,15 +57,7 @@ def main() -> int:
         output_path=args.output,
     )
 
-    print(f"\nStable Audio 3 CLI")
-    print(f"{get_device_info()}")
-    seed_desc = str(config.seed) if config.seed != -1 else "Random"
-    print(f"Model: {config.model_name} ({spec.description})")
-    print(f"Duration: {config.duration:.1f}s | Steps: {config.steps} | CFG: {config.cfg_scale} | Seed: {seed_desc}")
-    print(f"Prompt: \"{config.prompt}\"")
-    if config.negative_prompt:
-        print(f"Negative: \"{config.negative_prompt}\"")
-    print()
+    print(f"\nStable Audio 3 CLI | {get_device_info()}")
 
     try:
         result = generate_audio(config=config)

@@ -202,12 +202,11 @@ def load_model(
     elapsed = time.time() - t0
     load_done = f"[load_model] Loaded '{model_name}' in {elapsed:.2f}s."
     print(load_done)
-    mem_msg = ""
-    if torch.cuda.is_available():
-        mem_msg = f"[load_model] {_gpu_mem_summary()}"
-        print(mem_msg)
+    mem_summary = _gpu_mem_summary() if torch.cuda.is_available() else ""
+    if mem_summary:
+        print(f"[load_model] {mem_summary}")
     if status_callback:
-        status_callback(f"{load_done} ({mem_msg})" if mem_msg else load_done)
+        status_callback(f"{load_done} ({mem_summary})" if mem_summary else load_done)
 
     _MODEL_CACHE[model_name] = wrapped
     return wrapped
@@ -252,13 +251,15 @@ def generate_audio(
     neg = cfg.negative_prompt.strip() if cfg.negative_prompt and cfg.negative_prompt.strip() else None
     total_steps = int(cfg.steps)
 
-    # Terminal: log full generation parameters
+    # Terminal: log full generation parameters with single-line whitespace normalization
+    prompt_display = " ".join(prompt_clean.split())
     print(f"\n{'=' * 60}")
     print(f"[generate] model={cfg.model_name} duration={cfg.duration:.1f}s steps={total_steps} "
           f"cfg={cfg.cfg_scale} seed={resolved_seed}")
-    print(f"[generate] prompt=\"{prompt_clean}\"")
+    print(f"[generate] prompt=\"{prompt_display}\"")
     if neg:
-        print(f"[generate] negative=\"{neg}\"")
+        neg_display = " ".join(neg.split())
+        print(f"[generate] negative=\"{neg_display}\"")
     print(f"{'=' * 60}")
 
     with _INFERENCE_LOCK:

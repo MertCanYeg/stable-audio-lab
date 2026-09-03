@@ -30,6 +30,15 @@ CUSTOM_CSS = """
     margin-bottom: 12px;
     font-size: 0.9em;
 }
+.status-console textarea {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
+    font-size: 0.84rem !important;
+    line-height: 1.45 !important;
+    background-color: #0d1117 !important;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 6px !important;
+}
 """
 
 TAB_CONFIG = [
@@ -82,7 +91,8 @@ def generate(
     )
 
     q = queue.Queue()
-    logs = [f"⏳ Initializing generation with '{model_name}'..."]
+    init_msg = f"⏳ Initializing generation with '{model_name}'..."
+    logs = [init_msg]
     yield None, logs[0]
 
     def on_status(msg: str):
@@ -113,6 +123,10 @@ def generate(
             continue
 
         if event_type == "status":
+            # Once real stages start, replace the initial placeholder
+            if logs == [init_msg]:
+                logs.clear()
+
             if payload.startswith("[sampling]"):
                 active_sampling_bar = payload
             else:
@@ -121,11 +135,11 @@ def generate(
 
             display_text = "\n".join(logs)
             if active_sampling_bar:
-                display_text = f"{display_text}\n{active_sampling_bar}"
+                display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
             yield None, display_text
 
         elif event_type == "done":
-            summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
+            summary_display = f"✅ {payload.status_message}\n\n" + "\n".join(logs)
             yield payload.output_path, summary_display
             break
 
@@ -133,7 +147,7 @@ def generate(
             err = payload
             if isinstance(err, StableAudioError):
                 err_msg = f"❌ Error: {err}"
-                yield None, f"{chr(10).join(logs)}\n\n{err_msg}"
+                yield None, f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
                 raise gr.Error(str(err)) from err
             elif isinstance(err, torch.cuda.OutOfMemoryError):
                 gc.collect()
@@ -143,11 +157,11 @@ def generate(
                     f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
                     f"Try reducing duration or switching to a smaller model."
                 )
-                yield None, f"{chr(10).join(logs)}\n\n{oom_msg}"
+                yield None, f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
                 raise gr.Error(oom_msg) from err
             else:
                 err_msg = f"❌ Generation failed: {err}"
-                yield None, f"{chr(10).join(logs)}\n\n{err_msg}"
+                yield None, f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
                 raise gr.Error(f"Generation failed: {err}") from err
 
 
@@ -170,7 +184,7 @@ def build_model_tab(
     gr.Markdown(banner_text)
 
     with gr.Row():
-        with gr.Column(scale=3):
+        with gr.Column(scale=1):
             prompt = gr.Textbox(
                 label="Prompt",
                 value=spec.default_prompt,
@@ -198,6 +212,7 @@ def build_model_tab(
                     step=1,
                     label="Sampling Steps",
                 )
+            with gr.Row():
                 cfg = gr.Slider(
                     minimum=1.0,
                     maximum=15.0,
@@ -212,19 +227,19 @@ def build_model_tab(
                 )
             with gr.Row():
                 generate_btn = gr.Button(
-                    f"Generate with {tab_label}",
+                    f"✨ Generate with {tab_label}",
                     variant="primary",
                     size="lg",
                     scale=4,
                 )
                 clear_btn = gr.Button(
-                    "Clear Output",
+                    "🗑️ Clear Output",
                     variant="secondary",
                     size="lg",
                     scale=1,
                 )
 
-        with gr.Column(scale=2):
+        with gr.Column(scale=1):
             output_audio = gr.Audio(label="Generated Audio", type="filepath")
             status = gr.Textbox(
                 label="Generation Status & Telemetry",
@@ -232,6 +247,7 @@ def build_model_tab(
                 interactive=False,
                 lines=8,
                 max_lines=16,
+                elem_classes=["status-console"],
             )
 
     generate_btn.click(

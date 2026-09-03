@@ -35,14 +35,18 @@ def setup_environment():
                 except Exception:
                     pass
 
+    from contextlib import redirect_stderr, redirect_stdout
+
+    with open(os.devnull, "w") as devnull, redirect_stdout(devnull), redirect_stderr(devnull):
         try:
             import triton  # noqa: F401
         except ImportError:
-            try:
-                import stable_audio_3.models.transformer as _sat
-                _sat.flex_attention_compiled = None
-            except Exception:
-                pass
+            pass
+        try:
+            import stable_audio_3.models.transformer as _sat
+            _sat.flex_attention_compiled = None
+        except Exception:
+            pass
 
     _INITIALIZED = True
 
