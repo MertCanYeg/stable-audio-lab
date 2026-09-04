@@ -62,9 +62,11 @@ CUSTOM_CSS = """
     box-sizing: border-box !important;
 }
 .prompt-box textarea {
-    height: 76px !important;
-    min-height: 76px !important;
-    max-height: 76px !important;
+    height: 82px !important;
+    min-height: 82px !important;
+    max-height: 82px !important;
+    line-height: 1.4 !important;
+    overflow-y: hidden !important;
     resize: none !important;
 }
 .neg-prompt-box textarea {
@@ -74,8 +76,8 @@ CUSTOM_CSS = """
     resize: none !important;
 }
 .gradio-slider input[type="number"] {
-    width: 72px !important;
-    min-width: 72px !important;
+    width: 62px !important;
+    min-width: 62px !important;
     text-align: center !important;
 }
 .gradio-slider span, .gradio-slider label {
@@ -89,20 +91,57 @@ CUSTOM_CSS = """
     color: #e6edf3 !important;
     border: 1px solid #30363d !important;
     border-radius: 6px !important;
-    height: 310px !important;
+    height: 296px !important;
     white-space: pre-wrap !important;
     word-break: break-word !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
     padding-bottom: 8px !important;
 }
-.sweep-box {
-    max-height: 360px !important;
-    overflow-y: auto !important;
-    padding-right: 4px !important;
+.cfg-group {
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: var(--container-radius, 8px) !important;
+    background: var(--background-fill-secondary) !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
 }
-.sweep-box > div {
-    margin-bottom: 8px !important;
+.cfg-group .gradio-slider {
+    border: none !important;
+    background: transparent !important;
+    overflow-x: hidden !important;
+    padding: 4px 8px !important;
+}
+.cfg-group .gradio-textbox {
+    border: none !important;
+    background: transparent !important;
+    padding: 4px 8px !important;
+}
+.cfg-sweep-toggle {
+    padding: 6px 10px !important;
+    margin: 0 !important;
+    border-top: 1px solid var(--border-color-primary) !important;
+    background: var(--background-fill-primary) !important;
+}
+.metadata-toggle {
+    margin-top: 2px !important;
+    margin-bottom: 2px !important;
+}
+.sweep-box {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    box-shadow: none !important;
+}
+.sweep-box .gradio-audio {
+    flex-shrink: 0 !important;
+    height: 68px !important;
+    min-height: 68px !important;
+    max-height: 68px !important;
+    border-radius: 6px !important;
 }
 """
 
@@ -295,54 +334,56 @@ def build_model_tab(
                 info=neg_info,
                 elem_classes=["neg-prompt-box"],
             )
-            duration = gr.Slider(
-                minimum=1,
-                maximum=int(spec.max_duration),
-                value=int(spec.default_duration),
-                step=1,
-                label="Duration (seconds)",
-            )
-            steps = gr.Slider(
-                minimum=4,
-                maximum=50,
-                value=8,
-                step=1,
-                label="Sampling Steps",
-            )
             with gr.Row():
-                cfg = gr.Slider(
-                    minimum=1.0,
-                    maximum=15.0,
-                    value=1.0,
-                    step=0.5,
-                    label="CFG",
-                    scale=2,
-                    visible=True,
+                duration = gr.Slider(
+                    minimum=1,
+                    maximum=int(spec.max_duration),
+                    value=int(spec.default_duration),
+                    step=1,
+                    label="Duration (seconds)",
+                    scale=1,
                 )
-                cfg_sweep_input = gr.Textbox(
-                    label="CFG Values (comma-separated)",
-                    value="1.0, 1.5, 2.0, 3.0",
-                    placeholder="1.0, 1.5, 2.0, 3.0",
-                    scale=2,
-                    visible=False,
-                )
-                seed = gr.Number(
-                    value=-1,
-                    precision=0,
-                    label="Seed (-1 = random)",
+                steps = gr.Slider(
+                    minimum=4,
+                    maximum=50,
+                    value=8,
+                    step=1,
+                    label="Sampling Steps",
                     scale=1,
                 )
             with gr.Row():
-                cfg_sweep_toggle = gr.Checkbox(
-                    label="🔬 CFG Sweep (4 Variations)",
-                    value=False,
-                    scale=1,
-                )
-                embed_metadata_toggle = gr.Checkbox(
-                    label="🏷️ Embed Metadata",
-                    value=True,
-                    scale=1,
-                )
+                with gr.Column(scale=3, min_width=180):
+                    with gr.Group(elem_classes=["cfg-group"]):
+                        cfg = gr.Slider(
+                            minimum=1.0,
+                            maximum=15.0,
+                            value=1.0,
+                            step=0.5,
+                            label="CFG",
+                            visible=True,
+                        )
+                        cfg_sweep_input = gr.Textbox(
+                            label="CFG Values (comma-separated)",
+                            value="1.0, 1.5, 2.0, 3.0",
+                            placeholder="1.0, 1.5, 2.0, 3.0",
+                            visible=False,
+                        )
+                        cfg_sweep_toggle = gr.Checkbox(
+                            label="🔬 CFG Sweep (4 Variations)",
+                            value=False,
+                            elem_classes=["cfg-sweep-toggle"],
+                        )
+                with gr.Column(scale=2, min_width=120):
+                    seed = gr.Number(
+                        value=-1,
+                        precision=0,
+                        label="Seed (-1 = random)",
+                    )
+            embed_metadata_toggle = gr.Checkbox(
+                label="🏷️ Embed generation metadata in WAV",
+                value=True,
+                elem_classes=["metadata-toggle"],
+            )
             with gr.Row():
                 generate_btn = gr.Button(
                     f"✨ Generate with {model_name}",
