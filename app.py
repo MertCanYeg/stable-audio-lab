@@ -24,10 +24,23 @@ from core import (
 
 AUTO_SCROLL_JS = """
 () => {
-    const observer = new MutationObserver(() => {
-        document.querySelectorAll('.status-console textarea').forEach(el => {
-            el.scrollTop = el.scrollHeight;
-        });
+    const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            const target = mutation.target;
+            const consoleEl = target.nodeType === 1 
+                ? target.closest('.status-console') 
+                : target.parentElement?.closest('.status-console');
+            
+            if (consoleEl) {
+                const textarea = consoleEl.querySelector('textarea');
+                if (textarea) {
+                    const isNearBottom = (textarea.scrollHeight - textarea.clientHeight - textarea.scrollTop) <= 60;
+                    if (isNearBottom) {
+                        textarea.scrollTop = textarea.scrollHeight;
+                    }
+                }
+            }
+        }
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 }
@@ -98,10 +111,24 @@ CUSTOM_CSS = """
     overflow-x: hidden !important;
     padding-bottom: 8px !important;
 }
+.single-audio-box,
+.sweep-box {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+}
+.single-audio-box .block,
+.sweep-box .block {
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: var(--block-radius) !important;
+    background: var(--block-background-fill) !important;
+    box-shadow: none !important;
+}
 .cfg-group {
-    border: 1px solid var(--border-color-primary) !important;
-    border-radius: var(--container-radius, 8px) !important;
-    background: var(--background-fill-secondary) !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: var(--block-radius) !important;
+    background: var(--block-background-fill) !important;
     padding: 0 !important;
     box-sizing: border-box !important;
     height: 100% !important;
@@ -123,20 +150,34 @@ CUSTOM_CSS = """
 .cfg-sweep-toggle {
     padding: 6px 8px !important;
     margin: 0 !important;
-    border-top: 1px solid var(--border-color-primary) !important;
-    background: var(--background-fill-primary) !important;
+    border-top: 1px solid var(--block-border-color) !important;
+    background: rgba(0, 0, 0, 0.12) !important;
     font-size: 0.85rem !important;
 }
 .seed-col {
     display: flex !important;
     flex-direction: column !important;
 }
-.seed-box {
+.seed-col > .form {
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: var(--block-radius) !important;
+    background: var(--block-background-fill) !important;
     height: 100% !important;
     box-sizing: border-box !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
+    padding: 0 !important;
+}
+.seed-box {
+    border: none !important;
+    background: transparent !important;
+    height: 100% !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    padding: 8px 12px !important;
 }
 .seed-box > label {
     display: flex !important;
@@ -148,20 +189,15 @@ CUSTOM_CSS = """
     margin-bottom: 2px !important;
 }
 .sweep-box {
-    border: none !important;
-    background: transparent !important;
-    padding: 0 !important;
     display: flex !important;
     flex-direction: column !important;
     gap: 8px !important;
-    box-shadow: none !important;
 }
-.sweep-box .gradio-audio {
+.sweep-box .block {
     flex-shrink: 0 !important;
     height: 68px !important;
     min-height: 68px !important;
     max-height: 68px !important;
-    border-radius: 6px !important;
 }
 """
 
@@ -421,13 +457,13 @@ def build_model_tab(
                 )
 
         with gr.Column(scale=1):
-            with gr.Group(visible=True) as single_box:
-                output_audio = gr.Audio(label="Generated Audio", type="filepath")
+            with gr.Group(visible=True, elem_classes=["single-audio-box"]) as single_box:
+                output_audio = gr.Audio(label="Generated Audio", type="filepath", interactive=False)
             with gr.Group(visible=False, elem_classes=["sweep-box"]) as sweep_box:
-                sweep_audio_1 = gr.Audio(label="CFG 1.0", type="filepath")
-                sweep_audio_2 = gr.Audio(label="CFG 1.5", type="filepath")
-                sweep_audio_3 = gr.Audio(label="CFG 2.0", type="filepath")
-                sweep_audio_4 = gr.Audio(label="CFG 3.0", type="filepath")
+                sweep_audio_1 = gr.Audio(label="CFG 1.0", type="filepath", interactive=False)
+                sweep_audio_2 = gr.Audio(label="CFG 1.5", type="filepath", interactive=False)
+                sweep_audio_3 = gr.Audio(label="CFG 2.0", type="filepath", interactive=False)
+                sweep_audio_4 = gr.Audio(label="CFG 3.0", type="filepath", interactive=False)
             status = gr.Textbox(
                 label="Generation Status & Telemetry",
                 value="Ready to generate.",
