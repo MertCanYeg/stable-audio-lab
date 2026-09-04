@@ -137,21 +137,25 @@ CUSTOM_CSS = """
     justify-content: space-between !important;
     overflow: hidden !important;
 }
-.cfg-group .gradio-slider {
-    border: none !important;
-    background: transparent !important;
-    padding: 6px 10px 4px 10px !important;
-}
+.cfg-group .form,
+.cfg-group .block,
+.cfg-group .gradio-slider,
 .cfg-group .gradio-textbox {
     border: none !important;
     background: transparent !important;
+    box-shadow: none !important;
     padding: 6px 10px 4px 10px !important;
 }
-.cfg-sweep-toggle {
-    padding: 6px 8px !important;
-    margin: 0 !important;
+.cfg-sweep-toggle,
+.cfg-group .cfg-sweep-toggle.block,
+.cfg-group .form:has(.cfg-sweep-toggle) {
+    border: none !important;
     border-top: 1px solid var(--block-border-color) !important;
-    background: rgba(0, 0, 0, 0.12) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 6px 10px !important;
+    margin: 0 !important;
     font-size: 0.85rem !important;
 }
 .seed-col {
@@ -184,9 +188,36 @@ CUSTOM_CSS = """
     flex-direction: column !important;
     gap: 4px !important;
 }
-.metadata-toggle {
-    margin-top: 2px !important;
-    margin-bottom: 2px !important;
+.form:has(> .metadata-toggle),
+.form:has(.metadata-toggle) {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 4px 0 !important;
+}
+.metadata-toggle,
+.metadata-toggle.block {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 2px 4px !important;
+    margin: 0 !important;
+}
+.action-btn-row {
+    align-items: stretch !important;
+}
+.action-btn-row button {
+    height: 100% !important;
+    min-height: 48px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    line-height: 1.25 !important;
+    font-size: 0.92rem !important;
+    padding: 8px 12px !important;
+    box-sizing: border-box !important;
 }
 .sweep-box {
     display: flex !important;
@@ -442,7 +473,7 @@ def build_model_tab(
                 value=True,
                 elem_classes=["metadata-toggle"],
             )
-            with gr.Row():
+            with gr.Row(equal_height=True, elem_classes=["action-btn-row"]):
                 generate_btn = gr.Button(
                     f"✨ Generate with {model_name}",
                     variant="primary",
