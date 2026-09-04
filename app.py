@@ -64,15 +64,31 @@ CUSTOM_CSS = """
     cursor: pointer !important;
 }
 .model-info-banner {
-    padding: 8px 14px;
-    border-radius: 6px;
-    background-color: var(--background-fill-secondary);
-    margin-bottom: 12px;
-    font-size: 0.88em;
+    border-radius: 6px !important;
+    background-color: var(--background-fill-secondary) !important;
+    margin-top: 8px !important;
+    margin-bottom: 8px !important;
+    font-size: 0.88em !important;
     min-height: 38px !important;
+    height: 38px !important;
     display: flex !important;
     align-items: center !important;
     box-sizing: border-box !important;
+    padding: 0 14px !important;
+    overflow: hidden !important;
+}
+.model-info-banner.block {
+    padding: 0 14px !important;
+    margin: 8px 0 !important;
+}
+.model-info-banner div,
+.model-info-banner span,
+.model-info-banner p {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: normal !important;
+    display: flex !important;
+    align-items: center !important;
 }
 .prompt-box textarea {
     height: 82px !important;
@@ -132,16 +148,21 @@ CUSTOM_CSS = """
     border-radius: 4px !important;
     background: var(--block-background-fill) !important;
     box-shadow: none !important;
+    height: auto !important;
+    min-height: unset !important;
+    max-height: unset !important;
 }
 
-/* CFG Group - Unified card with seamless styling and no double borders */
+/* CFG Group - Unified card with seamless styling, balanced padding, and invariant height */
 .cfg-group {
     border: 1px solid var(--block-border-color) !important;
     border-radius: var(--block-radius) !important;
     background: var(--block-background-fill) !important;
     padding: 0 !important;
     box-sizing: border-box !important;
-    height: 100% !important;
+    height: 114px !important;
+    min-height: 114px !important;
+    max-height: 114px !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: space-between !important;
@@ -167,7 +188,18 @@ CUSTOM_CSS = """
     border: none !important;
     background: transparent !important;
     box-shadow: none !important;
-    padding: 6px 10px 4px 10px !important;
+    padding: 8px 10px 6px 10px !important;
+    height: 76px !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+}
+.cfg-group textarea {
+    height: 36px !important;
+    min-height: 36px !important;
+    max-height: 36px !important;
+    resize: none !important;
 }
 .cfg-sweep-toggle,
 .cfg-group .cfg-sweep-toggle.block {
@@ -176,12 +208,16 @@ CUSTOM_CSS = """
     border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
-    padding: 6px 10px !important;
+    padding: 7px 10px !important;
     margin: 0 !important;
+    height: 36px !important;
+    box-sizing: border-box !important;
     font-size: 0.85rem !important;
+    display: flex !important;
+    align-items: center !important;
 }
 
-/* Seed Column and Box */
+/* Seed Column and Box - Invariant matching height */
 .seed-col {
     display: flex !important;
     flex-direction: column !important;
@@ -190,7 +226,9 @@ CUSTOM_CSS = """
     border: 1px solid var(--block-border-color) !important;
     border-radius: var(--block-radius) !important;
     background: var(--block-background-fill) !important;
-    height: 100% !important;
+    height: 114px !important;
+    min-height: 114px !important;
+    max-height: 114px !important;
     box-sizing: border-box !important;
     display: flex !important;
     flex-direction: column !important;
@@ -247,12 +285,6 @@ CUSTOM_CSS = """
     display: flex !important;
     flex-direction: column !important;
     gap: 8px !important;
-}
-.sweep-box .block {
-    flex-shrink: 0 !important;
-    height: 68px !important;
-    min-height: 68px !important;
-    max-height: 68px !important;
 }
 """
 
