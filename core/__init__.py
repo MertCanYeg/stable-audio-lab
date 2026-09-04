@@ -24,6 +24,7 @@ from core.engine import (
     GenerationResult,
     generate_audio,
     load_model,
+    parse_cfg_sweep,
     slugify,
 )
 
@@ -51,5 +52,6 @@ __all__ = [
     "GenerationResult",
     "load_model",
     "generate_audio",
+    "parse_cfg_sweep",
     "slugify",
 ]

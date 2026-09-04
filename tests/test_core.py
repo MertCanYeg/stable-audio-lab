@@ -3,7 +3,13 @@
 import unittest
 
 from core.compat import get_device_info, setup_environment
-from core.engine import GenerationConfig, GenerationResult, generate_audio, slugify
+from core.engine import (
+    GenerationConfig,
+    GenerationResult,
+    generate_audio,
+    parse_cfg_sweep,
+    slugify,
+)
 from core.exceptions import (
     GenerationError,
     ModelNotFoundError,
@@ -148,6 +154,72 @@ class TestGenerationResult(unittest.TestCase):
         path, status = res
         self.assertEqual(path, "outputs/test.wav")
         self.assertEqual(status, "Generated 15s in 2s")
+
+
+class TestParseCfgSweep(unittest.TestCase):
+    """Test parse_cfg_sweep parsing and validation."""
+
+    def test_default_sweep(self):
+        self.assertEqual(parse_cfg_sweep(""), [1.0, 1.5, 2.0, 3.0])
+        self.assertEqual(parse_cfg_sweep("   "), [1.0, 1.5, 2.0, 3.0])
+
+    def test_custom_sweep(self):
+        self.assertEqual(parse_cfg_sweep("1.0, 2.5, 4.0, 6.0"), [1.0, 2.5, 4.0, 6.0])
+
+    def test_max_four_values(self):
+        self.assertEqual(parse_cfg_sweep("1, 2, 3, 4, 5, 6"), [1.0, 2.0, 3.0, 4.0])
+
+    def test_invalid_tokens_ignored(self):
+        self.assertEqual(parse_cfg_sweep("1.0, abc, 2.5, -1, 3.0"), [1.0, 2.5, 3.0])
+
+
+class TestMetadataAndConfig(unittest.TestCase):
+    """Test metadata config flag and RIFF INFO audio metadata roundtrip."""
+
+    def test_embed_metadata_default_true(self):
+        cfg = GenerationConfig(prompt="test")
+        self.assertTrue(cfg.embed_metadata)
+
+    def test_embed_metadata_can_be_disabled(self):
+        cfg = GenerationConfig(prompt="test", embed_metadata=False)
+        self.assertFalse(cfg.embed_metadata)
+
+    def test_metadata_roundtrip(self):
+        import json
+        import tempfile
+        import numpy as np
+        import soundfile as sf
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            meta = {
+                "model": "small-music",
+                "prompt": "synthwave beat",
+                "negative_prompt": "",
+                "duration": 5.0,
+                "steps": 8,
+                "cfg_scale": 1.5,
+                "seed": 123456,
+            }
+            with sf.SoundFile(tmp_path, mode="w", samplerate=44100, channels=2, subtype="PCM_16") as f:
+                f.comment = json.dumps(meta)
+                f.title = "synthwave beat"
+                f.artist = "Stable Audio Lab"
+                f.write(np.zeros((4410, 2), dtype=np.float32))
+
+            with sf.SoundFile(tmp_path) as f:
+                self.assertEqual(f.title, "synthwave beat")
+                self.assertEqual(f.artist, "Stable Audio Lab")
+                loaded = json.loads(f.comment)
+                self.assertEqual(loaded["seed"], 123456)
+                self.assertEqual(loaded["cfg_scale"], 1.5)
+                self.assertEqual(loaded["model"], "small-music")
+        finally:
+            import os
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
 
 class TestExceptions(unittest.TestCase):

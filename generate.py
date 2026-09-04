@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg-scale", type=float, default=1.0, help="Classifier-free guidance scale")
     parser.add_argument("--seed", type=int, default=-1, help="Random seed (-1 for random)")
     parser.add_argument("--output", "-o", type=str, default=None, help="Output .wav path")
+    parser.add_argument("--no-metadata", action="store_false", dest="embed_metadata", default=True, help="Disable embedding generation metadata in output WAV")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print full traceback on errors")
     return parser.parse_args()
 
@@ -55,6 +56,7 @@ def main() -> int:
         cfg_scale=args.cfg_scale,
         seed=args.seed,
         output_path=args.output,
+        embed_metadata=args.embed_metadata,
     )
 
     print(f"\nStable Audio 3 CLI | {get_device_info()}")

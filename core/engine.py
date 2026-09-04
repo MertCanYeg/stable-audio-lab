@@ -33,6 +33,25 @@ def slugify(text: str, max_len: int = 30) -> str:
     return slug if slug else "audio"
 
 
+def parse_cfg_sweep(text: str, default: Optional[list[float]] = None) -> list[float]:
+    """Parse comma-separated CFG values, ignoring invalid tokens. Returns up to 4 values."""
+    fallback = list(default) if default is not None else [1.0, 1.5, 2.0, 3.0]
+    if not text or not text.strip():
+        return fallback
+    parsed = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            val = float(part)
+            if val >= 0:
+                parsed.append(round(val, 2))
+        except ValueError:
+            continue
+    return parsed[:4] if parsed else fallback
+
+
 def _format_bytes(n: int) -> str:
     """Format byte count as human-readable string."""
     if n >= 1024**3:
@@ -67,6 +86,7 @@ class GenerationConfig:
     cfg_scale: float = 1.0
     seed: int = -1
     output_path: Optional[Union[str, Path]] = None
+    embed_metadata: bool = True
 
     def validate(self) -> None:
         """Validate generation parameters, raising GenerationError on failure."""
@@ -204,6 +224,7 @@ def generate_audio(
     cfg_scale: float = 1.0,
     seed: int = -1,
     output_path: Optional[Union[str, Path]] = None,
+    embed_metadata: bool = True,
     progress=None,
     step_callback: Optional[Callable[[int, int], None]] = None,
     status_callback: Optional[Callable[[str], None]] = None,
@@ -226,6 +247,7 @@ def generate_audio(
             cfg_scale=cfg_scale,
             seed=seed,
             output_path=output_path,
+            embed_metadata=embed_metadata,
         )
 
     cfg.validate()
@@ -365,12 +387,29 @@ def generate_audio(
             out_dir = Path("outputs")
             out_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_file = out_dir / f"{timestamp}_{cfg.model_name}_{slugify(prompt_clean)}.wav"
+            cfg_str = f"{cfg.cfg_scale:g}"
+            out_file = out_dir / f"{timestamp}_{cfg.model_name}_{slugify(prompt_clean)}_cfg{cfg_str}.wav"
 
         sample_rate = model.model.sample_rate
         audio_tensor = audio[0].detach().cpu().clamp(-1.0, 1.0)
         audio_np = audio_tensor.numpy().T
-        sf.write(str(out_file), audio_np, sample_rate, subtype="PCM_16")
+        channels = audio_np.shape[1] if audio_np.ndim > 1 else 1
+
+        with sf.SoundFile(str(out_file), mode="w", samplerate=sample_rate, channels=channels, subtype="PCM_16") as f:
+            if cfg.embed_metadata:
+                meta = {
+                    "model": cfg.model_name,
+                    "prompt": prompt_clean,
+                    "negative_prompt": neg or "",
+                    "duration": float(cfg.duration),
+                    "steps": total_steps,
+                    "cfg_scale": float(cfg.cfg_scale),
+                    "seed": resolved_seed,
+                }
+                f.comment = json.dumps(meta)
+                f.title = prompt_clean[:100]
+                f.artist = "Stable Audio Lab"
+            f.write(audio_np)
 
         # Total decode time: VAE latent decoding inside model.generate + disk write
         if diffusion_end is not None:
@@ -379,7 +418,6 @@ def generate_audio(
             decode_elapsed = time.time() - decode_start
 
         file_size = out_file.stat().st_size
-        channels = audio_np.shape[1] if audio_np.ndim > 1 else 1
 
         del audio
         gc.collect()

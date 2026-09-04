@@ -5,6 +5,7 @@ import argparse
 import functools
 import gc
 import queue
+import random
 import threading
 from dotenv import load_dotenv
 import gradio as gr
@@ -12,7 +13,14 @@ import torch
 
 load_dotenv()
 
-from core import MODELS, GenerationConfig, StableAudioError, generate_audio, get_device_info
+from core import (
+    MODELS,
+    GenerationConfig,
+    StableAudioError,
+    generate_audio,
+    get_device_info,
+    parse_cfg_sweep,
+)
 
 AUTO_SCROLL_JS = """
 () => {
@@ -86,6 +94,15 @@ CUSTOM_CSS = """
     word-break: break-word !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
+    padding-bottom: 8px !important;
+}
+.sweep-box {
+    max-height: 360px !important;
+    overflow-y: auto !important;
+    padding-right: 4px !important;
+}
+.sweep-box > div {
+    margin-bottom: 8px !important;
 }
 """
 
@@ -118,35 +135,65 @@ def generate(
     duration: float,
     steps: int,
     cfg: float,
+    cfg_sweep_text: str,
+    is_sweep: bool,
+    embed_metadata: bool,
     seed: int,
     progress=gr.Progress(track_tqdm=False),
 ):
-    """Generate audio with live streaming status, interactive UI sampling bar, and error recovery."""
-    config = GenerationConfig(
-        model_name=model_name,
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        duration=duration,
-        steps=steps,
-        cfg_scale=cfg,
-        seed=seed,
-    )
-    config.validate()
-
+    """Generate audio (single or CFG sweep) with live streaming status, interactive UI sampling bar, and error recovery."""
     q: queue.Queue = queue.Queue()
     logs: list[str] = []
     init_msg = f"Initializing {model_name}..."
     logs.append(init_msg)
-    yield None, init_msg
+    yield None, None, None, None, None, init_msg
+
+    sweep_files: list[str | None] = [None, None, None, None]
 
     def worker():
         try:
-            result = generate_audio(
-                config=config,
-                progress=progress,
-                status_callback=lambda msg: q.put(("status", msg)),
-            )
-            q.put(("done", result))
+            if not is_sweep:
+                config = GenerationConfig(
+                    model_name=model_name,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    duration=duration,
+                    steps=steps,
+                    cfg_scale=cfg,
+                    seed=seed,
+                    embed_metadata=embed_metadata,
+                )
+                config.validate()
+                result = generate_audio(
+                    config=config,
+                    progress=progress,
+                    status_callback=lambda msg: q.put(("status", msg)),
+                )
+                q.put(("done_single", result))
+            else:
+                cfgs = parse_cfg_sweep(cfg_sweep_text)
+                shared_seed = random.randint(0, 2**31 - 1) if (seed is None or int(seed) == -1) else int(seed)
+                q.put(("status", f"[sweep] Starting CFG Sweep ({len(cfgs)} variations) | Shared Seed: {shared_seed}"))
+                for idx, c_val in enumerate(cfgs):
+                    q.put(("status", f"\n[variation {idx + 1}/{len(cfgs)}] CFG: {c_val} (Seed: {shared_seed})"))
+                    var_cfg = GenerationConfig(
+                        model_name=model_name,
+                        prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        duration=duration,
+                        steps=steps,
+                        cfg_scale=c_val,
+                        seed=shared_seed,
+                        embed_metadata=embed_metadata,
+                    )
+                    var_cfg.validate()
+                    res = generate_audio(
+                        config=var_cfg,
+                        progress=progress,
+                        status_callback=lambda msg: q.put(("status", msg)),
+                    )
+                    q.put(("done_variation", (idx, res)))
+                q.put(("done_sweep", (len(cfgs), shared_seed)))
         except Exception as e:
             q.put(("error", e))
 
@@ -164,7 +211,6 @@ def generate(
             continue
 
         if event_type == "status":
-            # Once real stages start, replace the initial placeholder
             if logs == [init_msg]:
                 logs.clear()
 
@@ -177,18 +223,31 @@ def generate(
             display_text = "\n".join(logs)
             if active_sampling_bar:
                 display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
-            yield None, display_text
+            yield None, sweep_files[0], sweep_files[1], sweep_files[2], sweep_files[3], display_text
 
-        elif event_type == "done":
+        elif event_type == "done_single":
             summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
-            yield payload.output_path, summary_display
+            yield payload.output_path, None, None, None, None, summary_display
+            break
+
+        elif event_type == "done_variation":
+            idx, res = payload
+            if idx < len(sweep_files):
+                sweep_files[idx] = res.output_path
+            display_text = "\n".join(logs)
+            yield None, sweep_files[0], sweep_files[1], sweep_files[2], sweep_files[3], display_text
+
+        elif event_type == "done_sweep":
+            total_vars, s_seed = payload
+            summary_display = f"{chr(10).join(logs)}\n\n✅ Completed CFG Sweep: {total_vars} variations generated with Seed {s_seed}."
+            yield None, sweep_files[0], sweep_files[1], sweep_files[2], sweep_files[3], summary_display
             break
 
         elif event_type == "error":
             err = payload
             if isinstance(err, StableAudioError):
                 err_msg = f"❌ Error: {err}"
-                yield None, f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
+                yield None, sweep_files[0], sweep_files[1], sweep_files[2], sweep_files[3], f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
                 raise gr.Error(str(err)) from err
             elif isinstance(err, torch.cuda.OutOfMemoryError):
                 gc.collect()
@@ -198,17 +257,12 @@ def generate(
                     f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
                     f"Try reducing duration or switching to a smaller model."
                 )
-                yield None, f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
+                yield None, sweep_files[0], sweep_files[1], sweep_files[2], sweep_files[3], f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
                 raise gr.Error(oom_msg) from err
             else:
                 err_msg = f"❌ Generation failed: {err}"
-                yield None, f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
+                yield None, sweep_files[0], sweep_files[1], sweep_files[2], sweep_files[3], f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
                 raise gr.Error(err_msg) from err
-
-
-def reset_status():
-    """Reset the status textbox to ready state."""
-    return None, "Ready to generate."
 
 
 def build_model_tab(
@@ -263,11 +317,30 @@ def build_model_tab(
                     step=0.5,
                     label="CFG",
                     scale=2,
+                    visible=True,
+                )
+                cfg_sweep_input = gr.Textbox(
+                    label="CFG Values (comma-separated)",
+                    value="1.0, 1.5, 2.0, 3.0",
+                    placeholder="1.0, 1.5, 2.0, 3.0",
+                    scale=2,
+                    visible=False,
                 )
                 seed = gr.Number(
                     value=-1,
                     precision=0,
                     label="Seed (-1 = random)",
+                    scale=1,
+                )
+            with gr.Row():
+                cfg_sweep_toggle = gr.Checkbox(
+                    label="🔬 CFG Sweep (4 Variations)",
+                    value=False,
+                    scale=1,
+                )
+                embed_metadata_toggle = gr.Checkbox(
+                    label="🏷️ Embed Metadata",
+                    value=True,
                     scale=1,
                 )
             with gr.Row():
@@ -285,7 +358,13 @@ def build_model_tab(
                 )
 
         with gr.Column(scale=1):
-            output_audio = gr.Audio(label="Generated Audio", type="filepath")
+            with gr.Group(visible=True) as single_box:
+                output_audio = gr.Audio(label="Generated Audio", type="filepath")
+            with gr.Group(visible=False, elem_classes=["sweep-box"]) as sweep_box:
+                sweep_audio_1 = gr.Audio(label="CFG 1.0", type="filepath")
+                sweep_audio_2 = gr.Audio(label="CFG 1.5", type="filepath")
+                sweep_audio_3 = gr.Audio(label="CFG 2.0", type="filepath")
+                sweep_audio_4 = gr.Audio(label="CFG 3.0", type="filepath")
             status = gr.Textbox(
                 label="Generation Status & Telemetry",
                 value="Ready to generate.",
@@ -295,16 +374,99 @@ def build_model_tab(
                 elem_classes=["status-console"],
             )
 
-    generate_btn.click(
-        fn=functools.partial(generate, model_name),
-        inputs=[prompt, negative_prompt, duration, steps, cfg, seed],
-        outputs=[output_audio, status],
+    def on_sweep_toggle(is_sweep: bool, cfg_text: str):
+        cfgs = parse_cfg_sweep(cfg_text)
+        c1 = f"CFG {cfgs[0]}" if len(cfgs) > 0 else "CFG 1"
+        c2 = f"CFG {cfgs[1]}" if len(cfgs) > 1 else "CFG 2"
+        c3 = f"CFG {cfgs[2]}" if len(cfgs) > 2 else "CFG 3"
+        c4 = f"CFG {cfgs[3]}" if len(cfgs) > 3 else "CFG 4"
+        return (
+            gr.update(visible=not is_sweep),
+            gr.update(visible=is_sweep),
+            gr.update(visible=not is_sweep),
+            gr.update(visible=is_sweep),
+            gr.update(label=c1),
+            gr.update(label=c2),
+            gr.update(label=c3),
+            gr.update(label=c4),
+        )
+
+    cfg_sweep_toggle.change(
+        fn=on_sweep_toggle,
+        inputs=[cfg_sweep_toggle, cfg_sweep_input],
+        outputs=[
+            cfg,
+            cfg_sweep_input,
+            single_box,
+            sweep_box,
+            sweep_audio_1,
+            sweep_audio_2,
+            sweep_audio_3,
+            sweep_audio_4,
+        ],
     )
 
+    def on_cfg_input_change(cfg_text: str):
+        cfgs = parse_cfg_sweep(cfg_text)
+        c1 = f"CFG {cfgs[0]}" if len(cfgs) > 0 else "CFG 1"
+        c2 = f"CFG {cfgs[1]}" if len(cfgs) > 1 else "CFG 2"
+        c3 = f"CFG {cfgs[2]}" if len(cfgs) > 2 else "CFG 3"
+        c4 = f"CFG {cfgs[3]}" if len(cfgs) > 3 else "CFG 4"
+        return (
+            gr.update(label=c1),
+            gr.update(label=c2),
+            gr.update(label=c3),
+            gr.update(label=c4),
+        )
+
+    cfg_sweep_input.change(
+        fn=on_cfg_input_change,
+        inputs=[cfg_sweep_input],
+        outputs=[
+            sweep_audio_1,
+            sweep_audio_2,
+            sweep_audio_3,
+            sweep_audio_4,
+        ],
+    )
+
+    generate_btn.click(
+        fn=functools.partial(generate, model_name),
+        inputs=[
+            prompt,
+            negative_prompt,
+            duration,
+            steps,
+            cfg,
+            cfg_sweep_input,
+            cfg_sweep_toggle,
+            embed_metadata_toggle,
+            seed,
+        ],
+        outputs=[
+            output_audio,
+            sweep_audio_1,
+            sweep_audio_2,
+            sweep_audio_3,
+            sweep_audio_4,
+            status,
+        ],
+    )
+
+    def reset_all():
+        return None, None, None, None, None, "Ready to generate."
+
     clear_btn.click(
-        fn=reset_status,
+        fn=reset_all,
         inputs=[],
-        outputs=[output_audio, status],
+        outputs=[
+            output_audio,
+            sweep_audio_1,
+            sweep_audio_2,
+            sweep_audio_3,
+            sweep_audio_4,
+            status,
+        ],
     )
 
     if spec.examples:
