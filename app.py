@@ -112,19 +112,29 @@ CUSTOM_CSS = """
     padding-bottom: 8px !important;
 }
 .single-audio-box,
-.sweep-box {
+.single-audio-box .gr-group,
+.sweep-box,
+.sweep-box .gr-group {
     border: none !important;
     background: transparent !important;
     padding: 0 !important;
     box-shadow: none !important;
 }
+.single-audio-box .styler,
+.sweep-box .styler {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
 .single-audio-box .block,
 .sweep-box .block {
     border: 1px solid var(--block-border-color) !important;
-    border-radius: var(--block-radius) !important;
+    border-radius: 4px !important;
     background: var(--block-background-fill) !important;
     box-shadow: none !important;
 }
+
+/* CFG Group - Unified card with seamless styling and no double borders */
 .cfg-group {
     border: 1px solid var(--block-border-color) !important;
     border-radius: var(--block-radius) !important;
@@ -137,7 +147,20 @@ CUSTOM_CSS = """
     justify-content: space-between !important;
     overflow: hidden !important;
 }
-.cfg-group .form,
+.cfg-group .cfg-group,
+.cfg-group .styler,
+.cfg-group .form {
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+}
 .cfg-group .block,
 .cfg-group .gradio-slider,
 .cfg-group .gradio-textbox {
@@ -147,8 +170,7 @@ CUSTOM_CSS = """
     padding: 6px 10px 4px 10px !important;
 }
 .cfg-sweep-toggle,
-.cfg-group .cfg-sweep-toggle.block,
-.cfg-group .form:has(.cfg-sweep-toggle) {
+.cfg-group .cfg-sweep-toggle.block {
     border: none !important;
     border-top: 1px solid var(--block-border-color) !important;
     border-radius: 0 !important;
@@ -158,6 +180,8 @@ CUSTOM_CSS = """
     margin: 0 !important;
     font-size: 0.85rem !important;
 }
+
+/* Seed Column and Box */
 .seed-col {
     display: flex !important;
     flex-direction: column !important;
