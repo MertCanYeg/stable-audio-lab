@@ -103,52 +103,45 @@ CUSTOM_CSS = """
     border-radius: var(--container-radius, 8px) !important;
     background: var(--background-fill-secondary) !important;
     padding: 0 !important;
-    overflow: hidden !important;
     box-sizing: border-box !important;
-    height: 110px !important;
-    min-height: 110px !important;
-    max-height: 110px !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: space-between !important;
-}
-.cfg-group, .cfg-group .form, .cfg-group * {
-    overflow-x: hidden !important;
-}
-.cfg-group .gradio-slider {
-    border: none !important;
-    background: transparent !important;
-    overflow-x: hidden !important;
-    padding: 4px 8px !important;
-}
-.cfg-group .gradio-textbox {
-    border: none !important;
-    background: transparent !important;
-    padding: 4px 8px !important;
-}
-.cfg-sweep-toggle {
-    padding: 6px 10px !important;
-    margin: 0 !important;
-    border-top: 1px solid var(--border-color-primary) !important;
-    background: var(--background-fill-primary) !important;
-}
-.seed-box {
-    height: 110px !important;
-    min-height: 110px !important;
-    max-height: 110px !important;
-    box-sizing: border-box !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: space-between !important;
-}
-.seed-box > label {
     height: 100% !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: space-between !important;
+    overflow: hidden !important;
 }
-.seed-box input {
-    height: 42px !important;
+.cfg-group .gradio-slider {
+    border: none !important;
+    background: transparent !important;
+    padding: 6px 10px 4px 10px !important;
+}
+.cfg-group .gradio-textbox {
+    border: none !important;
+    background: transparent !important;
+    padding: 6px 10px 4px 10px !important;
+}
+.cfg-sweep-toggle {
+    padding: 6px 8px !important;
+    margin: 0 !important;
+    border-top: 1px solid var(--border-color-primary) !important;
+    background: var(--background-fill-primary) !important;
+    font-size: 0.85rem !important;
+}
+.seed-col {
+    display: flex !important;
+    flex-direction: column !important;
+}
+.seed-box {
+    height: 100% !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+}
+.seed-box > label {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
 }
 .metadata-toggle {
     margin-top: 2px !important;
@@ -379,7 +372,7 @@ def build_model_tab(
                     scale=1,
                 )
             with gr.Row(equal_height=True):
-                with gr.Column(scale=3, min_width=180):
+                with gr.Column(scale=2, min_width=200):
                     with gr.Group(elem_classes=["cfg-group"]):
                         cfg = gr.Slider(
                             minimum=1.0,
@@ -400,11 +393,12 @@ def build_model_tab(
                             value=False,
                             elem_classes=["cfg-sweep-toggle"],
                         )
-                with gr.Column(scale=2, min_width=120, elem_classes=["seed-col"]):
+                with gr.Column(scale=1, min_width=110, elem_classes=["seed-col"]):
                     seed = gr.Number(
                         value=-1,
                         precision=0,
-                        label="Seed (-1 = random)",
+                        label="Seed",
+                        info="Set to -1 for random seed",
                         elem_classes=["seed-box"],
                     )
             embed_metadata_toggle = gr.Checkbox(
