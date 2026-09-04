@@ -105,6 +105,15 @@ CUSTOM_CSS = """
     padding: 0 !important;
     overflow: hidden !important;
     box-sizing: border-box !important;
+    height: 110px !important;
+    min-height: 110px !important;
+    max-height: 110px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+}
+.cfg-group, .cfg-group .form, .cfg-group * {
+    overflow-x: hidden !important;
 }
 .cfg-group .gradio-slider {
     border: none !important;
@@ -122,6 +131,24 @@ CUSTOM_CSS = """
     margin: 0 !important;
     border-top: 1px solid var(--border-color-primary) !important;
     background: var(--background-fill-primary) !important;
+}
+.seed-box {
+    height: 110px !important;
+    min-height: 110px !important;
+    max-height: 110px !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+}
+.seed-box > label {
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+}
+.seed-box input {
+    height: 42px !important;
 }
 .metadata-toggle {
     margin-top: 2px !important;
@@ -351,7 +378,7 @@ def build_model_tab(
                     label="Sampling Steps",
                     scale=1,
                 )
-            with gr.Row():
+            with gr.Row(equal_height=True):
                 with gr.Column(scale=3, min_width=180):
                     with gr.Group(elem_classes=["cfg-group"]):
                         cfg = gr.Slider(
@@ -373,11 +400,12 @@ def build_model_tab(
                             value=False,
                             elem_classes=["cfg-sweep-toggle"],
                         )
-                with gr.Column(scale=2, min_width=120):
+                with gr.Column(scale=2, min_width=120, elem_classes=["seed-col"]):
                     seed = gr.Number(
                         value=-1,
                         precision=0,
                         label="Seed (-1 = random)",
+                        elem_classes=["seed-box"],
                     )
             embed_metadata_toggle = gr.Checkbox(
                 label="🏷️ Embed generation metadata in WAV",
