@@ -66,7 +66,7 @@ CUSTOM_CSS = """
 .model-info-banner {
     border-radius: 6px !important;
     background-color: var(--background-fill-secondary) !important;
-    margin-top: 8px !important;
+    margin-top: 0px !important;
     margin-bottom: 8px !important;
     font-size: 0.88em !important;
     min-height: 38px !important;
@@ -79,7 +79,8 @@ CUSTOM_CSS = """
 }
 .model-info-banner.block {
     padding: 0 14px !important;
-    margin: 8px 0 !important;
+    margin-top: 0px !important;
+    margin-bottom: 8px !important;
 }
 .model-info-banner div,
 .model-info-banner span,
@@ -215,6 +216,18 @@ CUSTOM_CSS = """
     font-size: 0.85rem !important;
     display: flex !important;
     align-items: center !important;
+    justify-content: flex-start !important;
+    width: 100% !important;
+}
+.cfg-sweep-toggle > *,
+.cfg-sweep-toggle label,
+.cfg-sweep-toggle .checkbox-container {
+    justify-content: flex-start !important;
+    align-items: center !important;
+    margin: 0 !important;
+    margin-right: auto !important;
+    width: auto !important;
+    text-align: left !important;
 }
 
 /* Seed Column and Box - Invariant matching height */
