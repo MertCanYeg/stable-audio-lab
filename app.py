@@ -185,9 +185,12 @@ CUSTOM_CSS = """
     justify-content: space-between !important;
     overflow: hidden !important;
 }
+.cfg-group,
 .cfg-group .cfg-group,
 .cfg-group .styler,
-.cfg-group .form {
+.cfg-group .form,
+.cfg-group .block,
+.cfg-group .gradio-textbox {
     border: none !important;
     border-radius: 0 !important;
     background: transparent !important;
@@ -198,6 +201,7 @@ CUSTOM_CSS = """
     display: flex !important;
     flex-direction: column !important;
     justify-content: space-between !important;
+    overflow: hidden !important;
 }
 .cfg-group .block,
 .cfg-group .gradio-slider,
@@ -205,21 +209,22 @@ CUSTOM_CSS = """
     border: none !important;
     background: transparent !important;
     box-shadow: none !important;
-    padding: 8px 10px 6px 10px !important;
+    padding: 6px 10px 4px 10px !important;
     height: 76px !important;
     box-sizing: border-box !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
+    overflow: hidden !important;
 }
 .cfg-group textarea,
 .cfg-group input {
-    height: 32px !important;
-    min-height: 32px !important;
-    max-height: 32px !important;
+    height: 28px !important;
+    min-height: 28px !important;
+    max-height: 28px !important;
     resize: none !important;
-    font-size: 0.88rem !important;
-    padding: 4px 8px !important;
+    font-size: 0.85rem !important;
+    padding: 2px 8px !important;
 }
 .cfg-group .info,
 .cfg-group span.info {

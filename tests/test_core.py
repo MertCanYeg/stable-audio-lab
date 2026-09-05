@@ -288,5 +288,74 @@ class TestExceptions(unittest.TestCase):
         self.assertTrue(issubclass(GenerationError, ValueError))
 
 
+class TestGenerationLifecycle(unittest.TestCase):
+    """Test output clearing on valid generation start and retention on error."""
+
+    def test_invalid_sweep_blocks_without_yielding_clear(self):
+        import gradio as gr
+        from app import generate
+
+        gen = generate(
+            model_name="small-sfx",
+            prompt="wind sounds",
+            negative_prompt="",
+            duration=5.0,
+            steps=8,
+            cfg=1.0,
+            cfg_sweep_text="1.0",
+            is_sweep=True,
+            embed_metadata=False,
+            seed=42,
+        )
+        with self.assertRaises(gr.Error) as ctx:
+            next(gen)
+        self.assertIn("Invalid CFG sweep input", str(ctx.exception))
+
+    def test_empty_prompt_blocks_immediately(self):
+        import gradio as gr
+        from app import generate
+
+        gen = generate(
+            model_name="small-sfx",
+            prompt="   ",
+            negative_prompt="",
+            duration=5.0,
+            steps=8,
+            cfg=1.0,
+            cfg_sweep_text="1.0, 2.0",
+            is_sweep=True,
+            embed_metadata=False,
+            seed=42,
+        )
+        with self.assertRaises(gr.Error) as ctx:
+            next(gen)
+        self.assertIn("Prompt cannot be empty", str(ctx.exception))
+
+    def test_valid_start_clears_outputs_immediately(self):
+        from app import generate
+
+        gen = generate(
+            model_name="small-sfx",
+            prompt="ocean waves",
+            negative_prompt="",
+            duration=5.0,
+            steps=8,
+            cfg=1.0,
+            cfg_sweep_text="1.0, 2.0, 3.0",
+            is_sweep=True,
+            embed_metadata=False,
+            seed=42,
+        )
+        first_step = next(gen)
+        out_single, s1, s2, s3, s4, s5, status = first_step
+        self.assertIsNone(out_single)
+        self.assertIsNone(s1["value"])
+        self.assertIsNone(s2["value"])
+        self.assertIsNone(s3["value"])
+        self.assertIsNone(s4["value"])
+        self.assertIsNone(s5["value"])
+        self.assertIn("Initializing small-sfx", status)
+
+
 if __name__ == "__main__":
     unittest.main()
