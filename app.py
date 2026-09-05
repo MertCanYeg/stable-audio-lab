@@ -194,12 +194,21 @@ CUSTOM_CSS = """
     box-sizing: border-box !important;
     margin: 0 !important;
     padding: 0 !important;
-    height: 100% !important;
+    gap: 0 !important;
+    row-gap: 0 !important;
+    column-gap: 0 !important;
+    height: 112px !important;
+    min-height: 112px !important;
+    max-height: 112px !important;
     display: flex !important;
     flex-direction: column !important;
+    flex-wrap: nowrap !important;
     justify-content: space-between !important;
+    overflow: hidden !important;
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
 }
-.cfg-group .block,
+.cfg-group .block:not(.cfg-sweep-toggle),
 .cfg-group .gradio-slider,
 .cfg-group .gradio-textbox {
     border: none !important;
@@ -207,10 +216,14 @@ CUSTOM_CSS = """
     box-shadow: none !important;
     padding: 8px 10px 6px 10px !important;
     height: 76px !important;
+    min-height: 76px !important;
+    max-height: 76px !important;
     box-sizing: border-box !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
+    overflow: hidden !important;
+    width: 100% !important;
 }
 .cfg-group textarea {
     height: 36px !important;
@@ -230,6 +243,7 @@ CUSTOM_CSS = """
     color: #f85149 !important;
 }
 .cfg-sweep-toggle,
+.cfg-group .cfg-sweep-toggle,
 .cfg-group .cfg-sweep-toggle.block {
     border: none !important;
     border-top: 1px solid var(--block-border-color) !important;
@@ -239,12 +253,15 @@ CUSTOM_CSS = """
     padding: 7px 10px !important;
     margin: 0 !important;
     height: 36px !important;
+    min-height: 36px !important;
+    max-height: 36px !important;
     box-sizing: border-box !important;
     font-size: 0.85rem !important;
     display: flex !important;
     align-items: center !important;
     justify-content: flex-start !important;
     width: 100% !important;
+    overflow: hidden !important;
 }
 .cfg-sweep-toggle > *,
 .cfg-sweep-toggle label,
