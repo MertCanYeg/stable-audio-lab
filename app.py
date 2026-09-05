@@ -185,7 +185,6 @@ CUSTOM_CSS = """
     justify-content: space-between !important;
     overflow: hidden !important;
 }
-.cfg-group,
 .cfg-group .cfg-group,
 .cfg-group .styler,
 .cfg-group .form {
@@ -199,9 +198,8 @@ CUSTOM_CSS = """
     display: flex !important;
     flex-direction: column !important;
     justify-content: space-between !important;
-    overflow: hidden !important;
 }
-.cfg-group .block:not(.cfg-sweep-toggle),
+.cfg-group .block,
 .cfg-group .gradio-slider,
 .cfg-group .gradio-textbox {
     border: none !important;
@@ -209,16 +207,12 @@ CUSTOM_CSS = """
     box-shadow: none !important;
     padding: 8px 10px 6px 10px !important;
     height: 76px !important;
-    min-height: 76px !important;
-    max-height: 76px !important;
     box-sizing: border-box !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
-    overflow: hidden !important;
 }
-.cfg-group textarea,
-.cfg-group input {
+.cfg-group textarea {
     height: 36px !important;
     min-height: 36px !important;
     max-height: 36px !important;
@@ -227,27 +221,13 @@ CUSTOM_CSS = """
     padding: 6px 10px !important;
     box-sizing: border-box !important;
 }
-.cfg-group .info,
-.cfg-group span.info,
-.cfg-group p.info {
-    display: none !important;
-}
-.cfg-group span[data-testid="block-info"] {
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    display: block !important;
-    font-size: 0.82rem !important;
-}
-.input-error textarea,
-.input-error input {
-    border-color: #f85149 !important;
+.input-error textarea {
+    border: 1px solid #f85149 !important;
     box-shadow: 0 0 0 1px #f85149 !important;
 }
-.input-error label > span[data-testid="block-info"],
+.input-error label > span,
 .input-error span[data-testid="block-info"] {
     color: #f85149 !important;
-    font-weight: 500 !important;
 }
 .cfg-sweep-toggle,
 .cfg-group .cfg-sweep-toggle.block {
@@ -256,19 +236,15 @@ CUSTOM_CSS = """
     border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
-    padding: 0 10px !important;
+    padding: 7px 10px !important;
     margin: 0 !important;
     height: 36px !important;
-    min-height: 36px !important;
-    max-height: 36px !important;
     box-sizing: border-box !important;
-    font-size: 0.82rem !important;
+    font-size: 0.85rem !important;
     display: flex !important;
     align-items: center !important;
     justify-content: flex-start !important;
     width: 100% !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
 }
 .cfg-sweep-toggle > *,
 .cfg-sweep-toggle label,
@@ -279,7 +255,6 @@ CUSTOM_CSS = """
     margin-right: auto !important;
     width: auto !important;
     text-align: left !important;
-    white-space: nowrap !important;
 }
 .cfg-sweep-toggle span {
     white-space: nowrap !important;
@@ -694,49 +669,84 @@ def build_model_tab(
         ],
     )
 
-    def _format_cfg_warning(msg: str) -> str:
-        if "Too few" in msg:
-            return "Requires at least 2 values"
-        if "Too many" in msg:
-            return "Supports at most 5 values"
-        if "out of range" in msg:
-            return "Values must be 1.0 to 15.0"
-        if "Invalid numeric" in msg:
-            return "Numbers only (1.0 to 15.0)"
-        return "Enter 2 to 5 numbers (1.0 to 15.0)"
+    def on_cfg_change(cfg_text: str):
+        is_valid, vals, _ = validate_cfg_sweep(cfg_text)
+        if is_valid:
+            audio_updates = []
+            for i in range(5):
+                if i < len(vals):
+                    audio_updates.append(gr.update(visible=True, label=f"CFG {vals[i]}"))
+                else:
+                    audio_updates.append(gr.update(visible=False))
+            return (
+                *audio_updates,
+                gr.update(
+                    label="CFG Values (comma-separated)",
+                    elem_classes=["cfg-sweep-input"],
+                ),
+            )
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+
+    cfg_sweep_input.change(
+        fn=on_cfg_change,
+        inputs=[cfg_sweep_input],
+        outputs=[
+            sweep_audio_1,
+            sweep_audio_2,
+            sweep_audio_3,
+            sweep_audio_4,
+            sweep_audio_5,
+            cfg_sweep_input,
+        ],
+    )
 
     def on_cfg_blur(cfg_text: str):
         is_valid, vals, msg = validate_cfg_sweep(cfg_text)
         if not is_valid:
-            warn = _format_cfg_warning(msg)
-            return gr.update(
-                label=f"CFG Values — ⚠️ {warn}",
-                elem_classes=["cfg-sweep-input", "input-error"],
+            gr.Warning(f"CFG Sweep: {msg}")
+            return (
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(
+                    label="CFG Values (comma-separated)",
+                    elem_classes=["cfg-sweep-input", "input-error"],
+                ),
             )
-        return gr.update(
-            label="CFG Values (comma-separated)",
-            elem_classes=["cfg-sweep-input"],
+        audio_updates = []
+        for i in range(5):
+            if i < len(vals):
+                audio_updates.append(gr.update(visible=True, label=f"CFG {vals[i]}"))
+            else:
+                audio_updates.append(gr.update(visible=False))
+        return (
+            *audio_updates,
+            gr.update(
+                label="CFG Values (comma-separated)",
+                elem_classes=["cfg-sweep-input"],
+            ),
         )
 
     cfg_sweep_input.blur(
         fn=on_cfg_blur,
         inputs=[cfg_sweep_input],
-        outputs=[cfg_sweep_input],
-    )
-
-    def on_cfg_change(cfg_text: str):
-        is_valid, vals, msg = validate_cfg_sweep(cfg_text)
-        if is_valid:
-            return gr.update(
-                label="CFG Values (comma-separated)",
-                elem_classes=["cfg-sweep-input"],
-            )
-        return gr.update()
-
-    cfg_sweep_input.change(
-        fn=on_cfg_change,
-        inputs=[cfg_sweep_input],
-        outputs=[cfg_sweep_input],
+        outputs=[
+            sweep_audio_1,
+            sweep_audio_2,
+            sweep_audio_3,
+            sweep_audio_4,
+            sweep_audio_5,
+            cfg_sweep_input,
+        ],
     )
 
     generate_btn.click(
