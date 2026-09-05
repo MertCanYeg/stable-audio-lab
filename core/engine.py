@@ -33,8 +33,58 @@ def slugify(text: str, max_len: int = 30) -> str:
     return slug if slug else "audio"
 
 
+def validate_cfg_sweep(
+    text: str,
+    min_count: int = 2,
+    max_count: int = 5,
+    min_val: float = 1.0,
+    max_val: float = 15.0,
+) -> tuple[bool, list[float], str]:
+    """Validate comma-separated CFG sweep input string.
+
+    Returns:
+        tuple[bool, list[float], str]: (is_valid, parsed_values, error_or_info_message)
+    """
+    if not text or not text.strip():
+        return False, [], "Please enter 2 to 5 numbers between 1.0 and 15.0 separated by commas."
+
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    if not parts:
+        return False, [], "Please enter 2 to 5 numbers between 1.0 and 15.0 separated by commas."
+
+    parsed: list[float] = []
+    invalid_tokens: list[str] = []
+    out_of_bounds: list[str] = []
+
+    for part in parts:
+        try:
+            val = float(part)
+            if val < min_val or val > max_val:
+                out_of_bounds.append(part)
+            else:
+                parsed.append(round(val, 2))
+        except ValueError:
+            invalid_tokens.append(part)
+
+    if invalid_tokens:
+        tokens_str = ", ".join(f"'{t}'" for t in invalid_tokens)
+        return False, [], f"Invalid numeric value(s): {tokens_str}. Must be numbers between {min_val:.1f} and {max_val:.1f}."
+
+    if out_of_bounds:
+        vals_str = ", ".join(out_of_bounds)
+        return False, [], f"Value(s) {vals_str} out of range. Each CFG must be between {min_val:.1f} and {max_val:.1f}."
+
+    if len(parsed) < min_count:
+        return False, parsed, f"Too few values ({len(parsed)} entered). Sweep requires at least {min_count} variations."
+
+    if len(parsed) > max_count:
+        return False, parsed, f"Too many values ({len(parsed)} entered). Sweep supports at most {max_count} variations."
+
+    return True, parsed, f"Valid: {len(parsed)} variations ({', '.join(str(v) for v in parsed)})"
+
+
 def parse_cfg_sweep(text: str, default: Optional[list[float]] = None) -> list[float]:
-    """Parse comma-separated CFG values, ignoring invalid tokens. Returns up to 4 values."""
+    """Parse comma-separated CFG values, ignoring invalid tokens. Returns up to 5 values."""
     fallback = list(default) if default is not None else [1.0, 1.5, 2.0, 3.0]
     if not text or not text.strip():
         return fallback
@@ -49,7 +99,7 @@ def parse_cfg_sweep(text: str, default: Optional[list[float]] = None) -> list[fl
                 parsed.append(round(val, 2))
         except ValueError:
             continue
-    return parsed[:4] if parsed else fallback
+    return parsed[:5] if parsed else fallback
 
 
 def _format_bytes(n: int) -> str:

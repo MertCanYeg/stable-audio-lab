@@ -9,6 +9,7 @@ from core.engine import (
     generate_audio,
     parse_cfg_sweep,
     slugify,
+    validate_cfg_sweep,
 )
 from core.exceptions import (
     GenerationError,
@@ -166,11 +167,66 @@ class TestParseCfgSweep(unittest.TestCase):
     def test_custom_sweep(self):
         self.assertEqual(parse_cfg_sweep("1.0, 2.5, 4.0, 6.0"), [1.0, 2.5, 4.0, 6.0])
 
-    def test_max_four_values(self):
-        self.assertEqual(parse_cfg_sweep("1, 2, 3, 4, 5, 6"), [1.0, 2.0, 3.0, 4.0])
+    def test_max_five_values(self):
+        self.assertEqual(parse_cfg_sweep("1, 2, 3, 4, 5, 6"), [1.0, 2.0, 3.0, 4.0, 5.0])
 
     def test_invalid_tokens_ignored(self):
         self.assertEqual(parse_cfg_sweep("1.0, abc, 2.5, -1, 3.0"), [1.0, 2.5, 3.0])
+
+
+class TestValidateCfgSweep(unittest.TestCase):
+    """Test validate_cfg_sweep for strict user input validation."""
+
+    def test_valid_sweeps(self):
+        valid, vals, msg = validate_cfg_sweep("1.0, 2.0")
+        self.assertTrue(valid)
+        self.assertEqual(vals, [1.0, 2.0])
+
+        valid, vals, msg = validate_cfg_sweep("1.0, 1.5, 2.0, 3.0, 4.5")
+        self.assertTrue(valid)
+        self.assertEqual(len(vals), 5)
+        self.assertIn("Valid", msg)
+
+    def test_empty_or_whitespace(self):
+        valid, vals, msg = validate_cfg_sweep("")
+        self.assertFalse(valid)
+        self.assertEqual(vals, [])
+        self.assertIn("Please enter 2 to 5 numbers", msg)
+
+        valid, vals, msg = validate_cfg_sweep("   ,   ")
+        self.assertFalse(valid)
+
+    def test_too_few_values(self):
+        valid, vals, msg = validate_cfg_sweep("2.5")
+        self.assertFalse(valid)
+        self.assertEqual(vals, [2.5])
+        self.assertIn("Too few values", msg)
+
+    def test_too_many_values(self):
+        valid, vals, msg = validate_cfg_sweep("1.0, 2.0, 3.0, 4.0, 5.0, 6.0")
+        self.assertFalse(valid)
+        self.assertEqual(len(vals), 6)
+        self.assertIn("Too many values", msg)
+
+    def test_out_of_bounds_values(self):
+        valid, vals, msg = validate_cfg_sweep("0.5, 2.0")
+        self.assertFalse(valid)
+        self.assertIn("out of range", msg)
+
+        valid, vals, msg = validate_cfg_sweep("1.0, 16.0")
+        self.assertFalse(valid)
+        self.assertIn("out of range", msg)
+
+    def test_non_numeric_tokens(self):
+        valid, vals, msg = validate_cfg_sweep("1.0, abc, 2.0")
+        self.assertFalse(valid)
+        self.assertIn("Invalid numeric value", msg)
+        self.assertIn("'abc'", msg)
+
+    def test_trailing_leading_commas_and_spaces(self):
+        valid, vals, msg = validate_cfg_sweep(" , 1.0, 2.5 , 3.0 , ")
+        self.assertTrue(valid)
+        self.assertEqual(vals, [1.0, 2.5, 3.0])
 
 
 class TestMetadataAndConfig(unittest.TestCase):

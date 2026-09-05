@@ -26,6 +26,7 @@ from core.engine import (
     load_model,
     parse_cfg_sweep,
     slugify,
+    validate_cfg_sweep,
 )
 
 __all__ = [
@@ -54,4 +55,5 @@ __all__ = [
     "generate_audio",
     "parse_cfg_sweep",
     "slugify",
+    "validate_cfg_sweep",
 ]
