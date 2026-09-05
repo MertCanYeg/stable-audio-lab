@@ -64,7 +64,7 @@ CUSTOM_CSS = """
     background-color: var(--background-fill-secondary) !important;
     cursor: pointer !important;
 }
-.model-info-banner {
+.model-info-banner.block {
     border-radius: 6px !important;
     background-color: var(--background-fill-secondary) !important;
     margin-top: 0px !important;
@@ -72,27 +72,31 @@ CUSTOM_CSS = """
     font-size: 0.88em !important;
     min-height: 38px !important;
     height: 38px !important;
+    max-height: 38px !important;
     display: flex !important;
     align-items: center !important;
     box-sizing: border-box !important;
     padding: 0 14px !important;
     overflow: hidden !important;
 }
-.model-info-banner.block {
-    padding: 0 14px !important;
-    margin-top: 0px !important;
-    margin-bottom: 8px !important;
+.model-info-banner .prose,
+.model-info-banner [data-testid="markdown-wrapper"],
+.model-info-banner span.md,
+.model-info-banner div:not(.block) {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    width: 100% !important;
 }
-.model-info-banner div,
-.model-info-banner span,
 .model-info-banner p {
     margin: 0 !important;
     padding: 0 !important;
     line-height: normal !important;
     display: block !important;
-}
-.model-info-banner .prose {
-    display: block !important;
+    width: 100% !important;
 }
 .model-info-banner code {
     all: unset !important;
