@@ -332,11 +332,13 @@ CUSTOM_CSS = """
     margin: 0 !important;
 }
 .action-btn-row {
+    display: flex !important;
     align-items: stretch !important;
 }
 .action-btn-row button {
-    height: 100% !important;
+    height: auto !important;
     min-height: 48px !important;
+    align-self: stretch !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
