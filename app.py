@@ -308,12 +308,35 @@ CUSTOM_CSS = """
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
-    padding: 8px 12px !important;
+    padding: 10px 10px !important;
+    overflow: hidden !important;
 }
 .seed-box > label {
     display: flex !important;
     flex-direction: column !important;
-    gap: 4px !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.seed-box span.has-info {
+    margin: 0 0 2px 0 !important;
+    line-height: 1.2 !important;
+    font-size: 0.85rem !important;
+}
+.seed-box .info-text {
+    font-size: 0.75rem !important;
+    line-height: 1.2 !important;
+    margin: 0 0 4px 0 !important;
+}
+.seed-box input {
+    height: 36px !important;
+    min-height: 36px !important;
+    max-height: 36px !important;
+    padding: 6px 10px !important;
+    box-sizing: border-box !important;
+    font-size: 0.85rem !important;
 }
 .form:has(> .metadata-toggle),
 .form:has(.metadata-toggle) {
