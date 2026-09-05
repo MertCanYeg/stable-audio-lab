@@ -83,27 +83,28 @@ CUSTOM_CSS = """
     margin-bottom: 8px !important;
 }
 .model-info-banner div,
-.model-info-banner span {
-    margin: 0 !important;
-    padding: 0 !important;
-    line-height: normal !important;
-    display: flex !important;
-    align-items: center !important;
-}
+.model-info-banner span,
 .model-info-banner p {
     margin: 0 !important;
     padding: 0 !important;
     line-height: normal !important;
     display: block !important;
 }
+.model-info-banner .prose {
+    display: block !important;
+}
 .model-info-banner code {
-    display: inline !important;
-    vertical-align: baseline !important;
+    all: unset !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-size: 0.85em !important;
+    background-color: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 4px !important;
+    padding: 1px 5px !important;
     margin: 0 4px !important;
-    padding: 2px 6px !important;
-    font-size: 0.92em !important;
-    line-height: inherit !important;
-    position: static !important;
+    display: inline-block !important;
+    vertical-align: 0px !important;
+    line-height: 1.3 !important;
 }
 .prompt-box textarea {
     height: 82px !important;
