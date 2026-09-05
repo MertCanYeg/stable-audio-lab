@@ -100,8 +100,8 @@ CUSTOM_CSS = """
     background-color: var(--background-fill-primary) !important;
     border: 1px solid var(--border-color-primary) !important;
     border-radius: 4px !important;
-    padding: 1px 5px !important;
-    margin: 0 4px !important;
+    padding: 1px 3px !important;
+    margin: 0 !important;
     display: inline-block !important;
     vertical-align: 0px !important;
     line-height: 1.3 !important;
