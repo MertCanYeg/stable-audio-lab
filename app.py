@@ -188,9 +188,7 @@ CUSTOM_CSS = """
 .cfg-group,
 .cfg-group .cfg-group,
 .cfg-group .styler,
-.cfg-group .form,
-.cfg-group .block,
-.cfg-group .gradio-textbox {
+.cfg-group .form {
     border: none !important;
     border-radius: 0 !important;
     background: transparent !important;
@@ -203,7 +201,7 @@ CUSTOM_CSS = """
     justify-content: space-between !important;
     overflow: hidden !important;
 }
-.cfg-group .block,
+.cfg-group .block:not(.cfg-sweep-toggle),
 .cfg-group .gradio-slider,
 .cfg-group .gradio-textbox {
     border: none !important;
@@ -211,6 +209,8 @@ CUSTOM_CSS = """
     box-shadow: none !important;
     padding: 6px 10px 4px 10px !important;
     height: 76px !important;
+    min-height: 76px !important;
+    max-height: 76px !important;
     box-sizing: border-box !important;
     display: flex !important;
     flex-direction: column !important;
@@ -256,11 +256,12 @@ CUSTOM_CSS = """
     margin: 0 !important;
     height: 36px !important;
     box-sizing: border-box !important;
-    font-size: 0.85rem !important;
+    font-size: 0.82rem !important;
     display: flex !important;
     align-items: center !important;
     justify-content: flex-start !important;
     width: 100% !important;
+    white-space: nowrap !important;
 }
 .cfg-sweep-toggle > *,
 .cfg-sweep-toggle label,
@@ -271,6 +272,11 @@ CUSTOM_CSS = """
     margin-right: auto !important;
     width: auto !important;
     text-align: left !important;
+    white-space: nowrap !important;
+}
+.cfg-sweep-toggle span {
+    white-space: nowrap !important;
+    font-size: 0.82rem !important;
 }
 
 /* Seed Column and Box - Invariant matching height */
