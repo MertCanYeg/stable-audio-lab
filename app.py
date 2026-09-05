@@ -207,7 +207,7 @@ CUSTOM_CSS = """
     border: none !important;
     background: transparent !important;
     box-shadow: none !important;
-    padding: 6px 10px 4px 10px !important;
+    padding: 8px 10px 6px 10px !important;
     height: 76px !important;
     min-height: 76px !important;
     max-height: 76px !important;
@@ -219,31 +219,35 @@ CUSTOM_CSS = """
 }
 .cfg-group textarea,
 .cfg-group input {
-    height: 28px !important;
-    min-height: 28px !important;
-    max-height: 28px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    max-height: 36px !important;
     resize: none !important;
     font-size: 0.85rem !important;
-    padding: 2px 8px !important;
+    padding: 6px 10px !important;
+    box-sizing: border-box !important;
 }
 .cfg-group .info,
-.cfg-group span.info {
-    font-size: 0.72rem !important;
-    line-height: 1.1 !important;
-    margin: 1px 0 2px 0 !important;
+.cfg-group span.info,
+.cfg-group p.info {
+    display: none !important;
+}
+.cfg-group span[data-testid="block-info"] {
     white-space: nowrap !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
+    display: block !important;
+    font-size: 0.82rem !important;
 }
 .input-error textarea,
 .input-error input {
     border-color: #f85149 !important;
     box-shadow: 0 0 0 1px #f85149 !important;
 }
-.input-error .info,
-.input-error span.info,
-.input-error label {
+.input-error label > span[data-testid="block-info"],
+.input-error span[data-testid="block-info"] {
     color: #f85149 !important;
+    font-weight: 500 !important;
 }
 .cfg-sweep-toggle,
 .cfg-group .cfg-sweep-toggle.block {
@@ -252,9 +256,11 @@ CUSTOM_CSS = """
     border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
-    padding: 7px 10px !important;
+    padding: 0 10px !important;
     margin: 0 !important;
     height: 36px !important;
+    min-height: 36px !important;
+    max-height: 36px !important;
     box-sizing: border-box !important;
     font-size: 0.82rem !important;
     display: flex !important;
@@ -262,6 +268,7 @@ CUSTOM_CSS = """
     justify-content: flex-start !important;
     width: 100% !important;
     white-space: nowrap !important;
+    overflow: hidden !important;
 }
 .cfg-sweep-toggle > *,
 .cfg-sweep-toggle label,
@@ -596,10 +603,7 @@ def build_model_tab(
                             label="CFG Values (comma-separated)",
                             value="1.0, 1.5, 2.0, 3.0",
                             placeholder="1.0, 1.5, 2.0, 3.0",
-                            info="Enter 2 to 5 values between 1.0 and 15.0",
                             elem_classes=["cfg-sweep-input"],
-                            lines=1,
-                            max_lines=1,
                             visible=False,
                         )
                         cfg_sweep_toggle = gr.Checkbox(
@@ -664,7 +668,11 @@ def build_model_tab(
                 audio_updates.append(gr.update(visible=False))
         return (
             gr.update(visible=not is_sweep),
-            gr.update(visible=is_sweep),
+            gr.update(
+                visible=is_sweep,
+                label="CFG Values (comma-separated)",
+                elem_classes=["cfg-sweep-input"],
+            ),
             gr.update(visible=not is_sweep),
             gr.update(visible=is_sweep),
             *audio_updates,
@@ -686,15 +694,27 @@ def build_model_tab(
         ],
     )
 
+    def _format_cfg_warning(msg: str) -> str:
+        if "Too few" in msg:
+            return "Requires at least 2 values"
+        if "Too many" in msg:
+            return "Supports at most 5 values"
+        if "out of range" in msg:
+            return "Values must be 1.0 to 15.0"
+        if "Invalid numeric" in msg:
+            return "Numbers only (1.0 to 15.0)"
+        return "Enter 2 to 5 numbers (1.0 to 15.0)"
+
     def on_cfg_blur(cfg_text: str):
         is_valid, vals, msg = validate_cfg_sweep(cfg_text)
         if not is_valid:
+            warn = _format_cfg_warning(msg)
             return gr.update(
-                info=f"⚠️ {msg}",
+                label=f"CFG Values — ⚠️ {warn}",
                 elem_classes=["cfg-sweep-input", "input-error"],
             )
         return gr.update(
-            info=f"Valid: {len(vals)} variations ({', '.join(str(v) for v in vals)})",
+            label="CFG Values (comma-separated)",
             elem_classes=["cfg-sweep-input"],
         )
 
@@ -708,7 +728,7 @@ def build_model_tab(
         is_valid, vals, msg = validate_cfg_sweep(cfg_text)
         if is_valid:
             return gr.update(
-                info=f"Valid: {len(vals)} variations ({', '.join(str(v) for v in vals)})",
+                label="CFG Values (comma-separated)",
                 elem_classes=["cfg-sweep-input"],
             )
         return gr.update()
@@ -753,8 +773,8 @@ def build_model_tab(
             None,
             "Ready to generate.",
             gr.update(
+                label="CFG Values (comma-separated)",
                 elem_classes=["cfg-sweep-input"],
-                info="Enter 2 to 5 values between 1.0 and 15.0",
             ),
         )
 
