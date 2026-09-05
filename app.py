@@ -290,7 +290,7 @@ CUSTOM_CSS = """
     justify-content: center !important;
     text-align: center !important;
     line-height: 1.25 !important;
-    font-size: 0.92rem !important;
+    font-size: 1rem !important;
     padding: 8px 12px !important;
     box-sizing: border-box !important;
 }
