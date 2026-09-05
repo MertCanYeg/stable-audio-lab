@@ -83,13 +83,27 @@ CUSTOM_CSS = """
     margin-bottom: 8px !important;
 }
 .model-info-banner div,
-.model-info-banner span,
-.model-info-banner p {
+.model-info-banner span {
     margin: 0 !important;
     padding: 0 !important;
     line-height: normal !important;
     display: flex !important;
     align-items: center !important;
+}
+.model-info-banner p {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: normal !important;
+    display: block !important;
+}
+.model-info-banner code {
+    display: inline !important;
+    vertical-align: baseline !important;
+    margin: 0 4px !important;
+    padding: 2px 6px !important;
+    font-size: 0.92em !important;
+    line-height: inherit !important;
+    position: static !important;
 }
 .prompt-box textarea {
     height: 82px !important;
