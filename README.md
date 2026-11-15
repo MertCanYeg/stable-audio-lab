@@ -64,11 +64,23 @@ Generate high-fidelity stereo audio in seconds:
 pixi run generate --prompt "Upbeat funky bassline with warm rhodes piano and crisp drums" --duration 15
 
 # Sound effect generation (small-sfx)
-pixi run generate --model small-sfx --prompt "Campfire crackling in a dense forest with gentle wind" --duration 10
+pixi run generate --model small-sfx --prompt "TrackType: SFX, deep campfire crackling and popping in a dense pine forest with gentle whistling night wind" --duration 15
+
+# Short cinematic sound effect (medium)
+pixi run generate --model medium --prompt "TrackType: SFX, massive robotic mech powering up with mechanical servo whines and hydraulic hiss" --duration 8
+
+# Sound effect with unwanted content suppressed
+pixi run generate --model medium --prompt "TrackType: SFX, colossal cinematic explosion with deep sub-bass shockwave and reverberant tail" --duration 6 --negative-prompt "music, melody, singing, speech, clipping, distortion"
 
 # High-fidelity music and sound design (medium)
 pixi run generate --model medium --prompt "An epic cinematic orchestral trailer theme with soaring strings" --duration 15
 ```
+
+For sound effects, prefix the prompt with `TrackType: SFX,` and then describe the
+sound, its environment, and any important motion or timing. This format is
+supported by both `small-sfx` and `medium`; `medium` is the unified model for
+high-fidelity music and sound design. Use `--negative-prompt` when you want to
+avoid music, vocals, speech, or other unwanted elements.
 
 All generated `.wav` files are automatically timestamped, slugified, and saved to the `outputs/` directory in standard 16-bit PCM CD-quality format. The exact seed used is displayed in the terminal so you can reproduce any track.
 
@@ -93,6 +105,40 @@ Open `http://127.0.0.1:7860` in your browser.
 | `--cfg-scale` | | `1.0` | Classifier-free guidance scale |
 | `--seed` | | `-1` | Seed for reproducibility (`-1` for random; seed is logged) |
 | `--output` | `-o` | `None` | Custom path to save the output `.wav` file |
+
+## 🤖 MCP Server for Agents
+
+The project also provides a local MCP server over `stdio`. It exposes the
+complete audio-generation parameter set through the `generate_audio_tool` tool,
+so an agent can generate music or sound effects without parsing terminal output.
+The tool returns the generated WAV path, resolved seed, timing, and status
+metadata.
+
+Start the server from the project root:
+
+```bash
+pixi run mcp
+```
+
+For a local MCP host, configure the server as a stdio command:
+
+```json
+{
+  "mcpServers": {
+    "stable-audio-lab": {
+      "command": "pixi",
+      "args": ["run", "mcp"],
+      "cwd": "C:\\Projects\\stable-audio-lab"
+    }
+  }
+}
+```
+
+The tool supports `prompt`, `model`, `negative_prompt`, `duration`, `steps`,
+`cfg_scale`, `seed`, `output`, and `embed_metadata`. For SFX, use a prompt such
+as `TrackType: SFX, massive robotic mech powering up with mechanical servo
+whines and hydraulic hiss`; no model is restricted to music-only use by the MCP
+layer.
 
 ---
 
@@ -127,6 +173,7 @@ stable-audio-lab/
 ├── tests/                 # Automated unit tests (slugify, registry, compat, storage, validation)
 ├── app.py                 # Gradio Web Studio with unified model selector & native progress
 ├── generate.py            # Lean CLI generation tool with tqdm progress & seed capture
+├── mcp_server.py          # Local stdio MCP server for agent-driven generation
 ├── download_models.py     # Terminal model cache inspector & pre-download tool
 ├── check_env.py           # Hardware & authentication diagnostic script
 ├── pixi.toml              # Declarative environment & tasks definition

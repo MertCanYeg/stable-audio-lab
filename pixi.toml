@@ -8,6 +8,7 @@ version = "0.1.0"
 [tasks]
 check-env = "python check_env.py"
 generate = "python generate.py"
+mcp = "python mcp_server.py"
 ui = "python app.py"
 test = "python -m unittest discover -s tests -p \"test_*.py\""
 update = "git pull"
@@ -33,5 +34,6 @@ accelerate = ">=0.28.0"
 soundfile = ">=0.13.1"
 gradio = ">=5.0"
 huggingface-hub = ">=0.28.0"
+mcp = { version = ">=2.0.0", extras = ["cli"] }
 python-dotenv = ">=1.0.0"
 stable-audio-3 = { git = "https://github.com/Stability-AI/stable-audio-3.git" }
