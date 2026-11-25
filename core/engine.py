@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional, Tuple, Union
 
+import numpy as np
 from safetensors.torch import load_file
 import soundfile as sf
 import torch
@@ -139,6 +140,13 @@ class GenerationConfig:
     output_path: Optional[Union[str, Path]] = None
     embed_metadata: bool = True
     chunked_decode: Optional[bool] = True
+    init_audio_path: Optional[Union[str, Path]] = None
+    init_noise_level: float = 0.7
+    inpaint_audio_path: Optional[Union[str, Path]] = None
+    inpaint_start: Optional[float] = None
+    inpaint_end: Optional[float] = None
+    normalize_audio: bool = False
+    fade_out_seconds: float = 0.0
 
     def validate(self) -> None:
         """Validate generation parameters, raising StableAudioError on failure."""
@@ -151,6 +159,26 @@ class GenerationConfig:
             raise GenerationError(f"Steps must be at least 1 (got {self.steps}).")
         if self.cfg_scale < 0:
             raise GenerationError(f"CFG scale must be non-negative (got {self.cfg_scale}).")
+        if self.init_audio_path is not None and self.inpaint_audio_path is not None:
+            raise GenerationError("Cannot use both init_audio_path and inpaint_audio_path in the same generation.")
+        if self.init_audio_path is not None:
+            if not Path(self.init_audio_path).is_file():
+                raise GenerationError(f"Source audio file not found: {self.init_audio_path}")
+            if not (0.0 < float(self.init_noise_level) <= 1.0):
+                raise GenerationError(
+                    f"init_noise_level must be in (0.0, 1.0] (got {self.init_noise_level})."
+                )
+        if self.inpaint_audio_path is not None:
+            if not Path(self.inpaint_audio_path).is_file():
+                raise GenerationError(f"Inpaint source audio file not found: {self.inpaint_audio_path}")
+            if self.inpaint_start is None or self.inpaint_end is None:
+                raise GenerationError("Inpainting requires both inpaint_start and inpaint_end seconds.")
+            if float(self.inpaint_start) < 0.0 or float(self.inpaint_end) <= float(self.inpaint_start):
+                raise GenerationError(
+                    f"Invalid inpaint range: start={self.inpaint_start}s, end={self.inpaint_end}s."
+                )
+        if float(self.fade_out_seconds) < 0.0:
+            raise GenerationError(f"fade_out_seconds must be non-negative (got {self.fade_out_seconds}).")
 
     def resolve_seed(self) -> int:
         """Resolve random seed if set to -1."""
@@ -472,6 +500,19 @@ def generate_audio(
 
         audio = None
         try:
+            init_audio_input = None
+            inpaint_audio_input = None
+            if cfg.init_audio_path is not None:
+                _emit_log(f"[generate] Loading source audio for remix: {Path(cfg.init_audio_path).name} (noise={cfg.init_noise_level:.2f})", status_callback)
+                init_audio_input = _load_source_audio(cfg.init_audio_path)
+            elif cfg.inpaint_audio_path is not None:
+                _emit_log(
+                    f"[generate] Loading source audio for inpainting ({cfg.inpaint_start:.1f}s - {cfg.inpaint_end:.1f}s): "
+                    f"{Path(cfg.inpaint_audio_path).name}",
+                    status_callback,
+                )
+                inpaint_audio_input = _load_source_audio(cfg.inpaint_audio_path)
+
             audio = model.generate(
                 prompt=prompt_clean,
                 negative_prompt=neg,
@@ -480,6 +521,11 @@ def generate_audio(
                 cfg_scale=float(cfg.cfg_scale),
                 seed=resolved_seed,
                 sample_size=sample_size,
+                init_audio=init_audio_input,
+                init_noise_level=float(cfg.init_noise_level),
+                inpaint_audio=inpaint_audio_input,
+                inpaint_mask_start_seconds=float(cfg.inpaint_start) if inpaint_audio_input is not None else None,
+                inpaint_mask_end_seconds=float(cfg.inpaint_end) if inpaint_audio_input is not None else None,
                 chunked_decode=cfg.chunked_decode,
                 callback=_on_step,
                 disable_tqdm=True,
@@ -526,6 +572,12 @@ def generate_audio(
             sample_rate = model.model.sample_rate
             audio_tensor = audio[0].detach().cpu().clamp(-1.0, 1.0)
             audio_np = audio_tensor.numpy().T
+            audio_np = apply_post_processing(
+                audio_np,
+                sample_rate=sample_rate,
+                normalize=cfg.normalize_audio,
+                fade_out_seconds=float(cfg.fade_out_seconds),
+            )
             channels = audio_np.shape[1] if audio_np.ndim > 1 else 1
 
             with sf.SoundFile(str(out_file), mode="w", samplerate=sample_rate, channels=channels, subtype="PCM_16") as f:
@@ -538,6 +590,8 @@ def generate_audio(
                         "steps": total_steps,
                         "cfg_scale": float(cfg.cfg_scale),
                         "seed": resolved_seed,
+                        "normalize_audio": bool(cfg.normalize_audio),
+                        "fade_out_seconds": float(cfg.fade_out_seconds),
                     }
                     f.comment = json.dumps(meta)
                     f.title = prompt_clean[:100]
@@ -656,3 +710,63 @@ def list_recent_outputs(output_dir: Union[str, Path] = "outputs", limit: int = 3
             }
         )
     return records
+
+
+def _load_source_audio(audio_path: Union[str, Path]) -> Tuple[int, torch.Tensor]:
+    """Load an audio file as a (sample_rate, channels-first float32 tensor) tuple."""
+    path = Path(audio_path)
+    if not path.is_file():
+        raise GenerationError(f"Audio file not found: {audio_path}")
+    try:
+        data, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    except Exception as e:
+        raise GenerationError(f"Failed to read audio file '{path.name}': {e}") from e
+    tensor = torch.from_numpy(data.T.copy())
+    return int(sr), tensor
+
+
+def apply_post_processing(
+    audio_np: np.ndarray,
+    sample_rate: int,
+    normalize: bool = False,
+    fade_out_seconds: float = 0.0,
+) -> np.ndarray:
+    """Apply optional raised-cosine fade-out and -1 dBFS peak normalization."""
+    out = np.array(audio_np, dtype=np.float32, copy=True)
+    if out.size == 0:
+        return out
+
+    if fade_out_seconds > 0.0 and sample_rate > 0:
+        fade_samples = min(out.shape[0], int(round(fade_out_seconds * sample_rate)))
+        if fade_samples > 1:
+            curve = (0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, fade_samples, dtype=np.float32))))
+            if out.ndim > 1:
+                out[-fade_samples:] *= curve[:, None]
+            else:
+                out[-fade_samples:] *= curve
+        elif fade_samples == 1:
+            out[-1] = 0.0
+
+    if normalize:
+        peak = float(np.max(np.abs(out)))
+        if peak > 1e-8:
+            target_peak = float(10.0 ** (-1.0 / 20.0))
+            out *= target_peak / peak
+
+    return np.clip(out, -1.0, 1.0)
+
+
+def delete_output_file(wav_path: Union[str, Path], output_dir: Union[str, Path] = "outputs") -> bool:
+    """Safely delete a generated WAV file inside output_dir, preventing path traversal."""
+    base = Path(output_dir).resolve()
+    target = Path(wav_path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError as e:
+        raise GenerationError(f"Refusing to delete file outside '{output_dir}': {wav_path}") from e
+    if target.suffix.lower() != ".wav":
+        raise GenerationError(f"Refusing to delete non-WAV file: {target.name}")
+    if not target.is_file():
+        return False
+    target.unlink()
+    return True

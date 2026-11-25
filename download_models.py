@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-download and cache manager for Stable Audio 3 models."""
+"""Pre-download Stable Audio 3 model weights into the local Hugging Face cache."""
 
 from __future__ import annotations
 
@@ -9,51 +9,50 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from core import MODELS, check_model_cache, download_model
+from core import MODELS, check_model_cache, download_model, get_device_info
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command line arguments for model weight pre-downloading."""
     parser = argparse.ArgumentParser(
-        description="Pre-download Stable Audio 3 models",
+        description="Download Stable Audio 3 model weights to the local cache",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--model", "-m", type=str, default="all", choices=["all"] + list(MODELS.keys()), help="Target model"
+        "--models",
+        "-m",
+        nargs="+",
+        choices=list(MODELS.keys()),
+        default=list(MODELS.keys()),
+        help="Model(s) to download",
     )
-    parser.add_argument("--force", action="store_true", help="Force re-download cached files")
-    parser.add_argument("--status", action="store_true", help="Show cache status without downloading")
-    return parser.parse_args()
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-download even if already cached",
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    print(f"Stable Audio Lab | {get_device_info()}")
 
-    if args.status:
-        print(f"\n{'Model':<15} | {'Status':<20} | {'Description'}")
-        print("-" * 65)
-        for name, spec in MODELS.items():
-            st = check_model_cache(name)
-            print(f"{name:<15} | {st.status_text:<20} | {spec.description}")
-        print()
-        return 0
-
-    targets = list(MODELS.keys()) if args.model == "all" else [args.model]
-    print(f"Checking {len(targets)} model(s): {', '.join(targets)}")
-
-    for name in targets:
-        st = check_model_cache(name)
-        if st.downloaded and not args.force:
-            print(f"[{name}] Already cached ({st.size_gb:.2f} GB).")
+    all_ok = True
+    for model_name in args.models:
+        status = check_model_cache(model_name)
+        if status.downloaded and not args.force:
+            print(f"[{model_name}] Already cached: {status.status_text}")
             continue
+        ok = download_model(model_name, force=args.force)
+        if ok:
+            updated = check_model_cache(model_name)
+            print(f"[{model_name}] Ready: {updated.status_text}")
+        else:
+            print(f"[{model_name}] Download failed.")
+            all_ok = False
 
-        print(f"[{name}] Downloading...")
-        success = download_model(name, force=args.force)
-        if not success:
-            print(f"Error: [{name}] Download failed. Verify network connection and HF_TOKEN.")
-            return 1
-
-    print("All requested models are ready on disk.")
-    return 0
+    return 0 if all_ok else 1
 
 
 if __name__ == "__main__":

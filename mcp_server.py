@@ -13,7 +13,16 @@ from mcp.server import MCPServer
 
 load_dotenv()
 
-from core import GenerationConfig, StableAudioError, generate_audio
+from core import (
+    MODELS,
+    GenerationConfig,
+    StableAudioError,
+    check_model_cache,
+    generate_audio,
+    get_loaded_model_name,
+    list_recent_outputs,
+    unload_model,
+)
 
 
 mcp = MCPServer("stable-audio-lab")
@@ -30,8 +39,15 @@ def generate_audio_tool(
     seed: int = -1,
     output: str | None = None,
     embed_metadata: bool = True,
+    init_audio: str | None = None,
+    init_noise_level: float = 0.7,
+    inpaint_audio: str | None = None,
+    inpaint_start: float | None = None,
+    inpaint_end: float | None = None,
+    normalize_audio: bool = False,
+    fade_out_seconds: float = 0.0,
 ) -> dict[str, Any]:
-    """Generate music or sound effects and return the WAV path and metadata.
+    """Generate music or sound effects (text, remix, or inpainting) and return the WAV path and metadata.
 
     Use `TrackType: SFX,` at the start of prompts for sound effects. The
     available models are `small-music`, `small-sfx`, and `medium`.
@@ -46,6 +62,13 @@ def generate_audio_tool(
         seed=seed,
         output_path=Path(output) if output else None,
         embed_metadata=embed_metadata,
+        init_audio_path=Path(init_audio) if init_audio else None,
+        init_noise_level=init_noise_level,
+        inpaint_audio_path=Path(inpaint_audio) if inpaint_audio else None,
+        inpaint_start=inpaint_start,
+        inpaint_end=inpaint_end,
+        normalize_audio=normalize_audio,
+        fade_out_seconds=fade_out_seconds,
     )
 
     try:
@@ -62,6 +85,44 @@ def generate_audio_tool(
         "elapsed": result.elapsed,
         "speed": result.speed,
         "seed": result.seed,
+    }
+
+
+@mcp.tool()
+def list_models_tool() -> dict[str, Any]:
+    """List available Stable Audio 3 models, local cache status, and currently loaded model."""
+    models = []
+    for name, spec in MODELS.items():
+        cache = check_model_cache(name)
+        models.append(
+            {
+                "name": spec.name,
+                "repo_id": spec.repo_id,
+                "default_duration": spec.default_duration,
+                "max_duration": spec.max_duration,
+                "description": spec.description,
+                "cache": cache.to_dict(),
+            }
+        )
+    return {
+        "loaded_model": get_loaded_model_name(),
+        "models": models,
+    }
+
+
+@mcp.tool()
+def list_recent_outputs_tool(limit: int = 20) -> list[dict[str, Any]]:
+    """List recent generated WAV files and their embedded generation metadata."""
+    return list_recent_outputs(limit=max(1, min(100, int(limit))))
+
+
+@mcp.tool()
+def unload_model_tool() -> dict[str, Any]:
+    """Evict the currently cached model from memory and reclaim CUDA VRAM."""
+    evicted = unload_model()
+    return {
+        "unloaded_model": evicted,
+        "status": f"Unloaded '{evicted}'" if evicted else "No model was loaded; cache cleared.",
     }
 
 

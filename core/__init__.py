@@ -23,6 +23,8 @@ setup_environment()
 from core.engine import (
     GenerationConfig,
     GenerationResult,
+    apply_post_processing,
+    delete_output_file,
     generate_audio,
     get_loaded_model_name,
     list_recent_outputs,
@@ -57,6 +59,8 @@ __all__ = [
     # Engine
     "GenerationConfig",
     "GenerationResult",
+    "apply_post_processing",
+    "delete_output_file",
     "get_loaded_model_name",
     "load_model",
     "unload_model",

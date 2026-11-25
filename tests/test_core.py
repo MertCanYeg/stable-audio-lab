@@ -8,6 +8,8 @@ from core.engine import (
     _MODEL_CACHE,
     GenerationConfig,
     GenerationResult,
+    apply_post_processing,
+    delete_output_file,
     generate_audio,
     get_loaded_model_name,
     list_recent_outputs,
@@ -584,6 +586,157 @@ class TestRobustnessAndCancellation(unittest.TestCase):
                 with self.assertRaises(gr.Error):
                     list(gen)
             self.assertEqual(len(_MODEL_CACHE), 0)
+
+    def test_generation_config_audio_and_postproc_validation(self):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            GenerationConfig(prompt="lo-fi remix", init_audio_path=tmp_path, init_noise_level=0.6).validate()
+            GenerationConfig(prompt="fill gap", inpaint_audio_path=tmp_path, inpaint_start=1.0, inpaint_end=4.0).validate()
+
+            with self.assertRaises(GenerationError):
+                GenerationConfig(
+                    prompt="both",
+                    init_audio_path=tmp_path,
+                    inpaint_audio_path=tmp_path,
+                    inpaint_start=1.0,
+                    inpaint_end=2.0,
+                ).validate()
+
+            with self.assertRaises(GenerationError):
+                GenerationConfig(prompt="remix", init_audio_path=tmp_path, init_noise_level=0.0).validate()
+            with self.assertRaises(GenerationError):
+                GenerationConfig(prompt="remix", init_audio_path=tmp_path, init_noise_level=1.5).validate()
+
+            with self.assertRaises(GenerationError):
+                GenerationConfig(prompt="inpaint", inpaint_audio_path=tmp_path, inpaint_start=5.0, inpaint_end=3.0).validate()
+
+            with self.assertRaises(GenerationError):
+                GenerationConfig(prompt="remix", init_audio_path="does_not_exist_12345.wav").validate()
+
+            with self.assertRaises(GenerationError):
+                GenerationConfig(prompt="fade", fade_out_seconds=-1.0).validate()
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_apply_post_processing_normalize_and_fade(self):
+        import numpy as np
+
+        sr = 1000
+        audio = np.full((2000, 2), 0.25, dtype=np.float32)
+        processed = apply_post_processing(audio, sample_rate=sr, normalize=True, fade_out_seconds=1.0)
+        expected_peak = 10.0 ** (-1.0 / 20.0)
+        self.assertAlmostEqual(float(np.max(np.abs(processed))), expected_peak, places=4)
+        self.assertAlmostEqual(float(np.abs(processed[-1, 0])), 0.0, places=5)
+
+        silent = np.zeros((1000, 2), dtype=np.float32)
+        silent_out = apply_post_processing(silent, sample_rate=sr, normalize=True, fade_out_seconds=0.5)
+        self.assertTrue(np.all(np.isfinite(silent_out)))
+        self.assertEqual(float(np.max(np.abs(silent_out))), 0.0)
+
+    def test_delete_output_file_safety(self):
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wav_path = os.path.join(tmp_dir, "sample.wav")
+            txt_path = os.path.join(tmp_dir, "notes.txt")
+            with open(wav_path, "wb") as f:
+                f.write(b"RIFF")
+            with open(txt_path, "wb") as f:
+                f.write(b"hi")
+
+            self.assertTrue(delete_output_file(wav_path, output_dir=tmp_dir))
+            self.assertFalse(os.path.exists(wav_path))
+            self.assertFalse(delete_output_file(wav_path, output_dir=tmp_dir))
+
+            with self.assertRaises(GenerationError):
+                delete_output_file(txt_path, output_dir=tmp_dir)
+            with self.assertRaises(GenerationError):
+                delete_output_file(os.path.join(tmp_dir, "..", "outside.wav"), output_dir=tmp_dir)
+
+    def test_app_seed_batch_and_audio_mode_validation(self):
+        from unittest.mock import patch
+        import gradio as gr
+        from app import generate
+
+        with self.assertRaises(gr.Error):
+            next(
+                generate(
+                    model_name="small-sfx",
+                    prompt="ocean waves",
+                    negative_prompt="",
+                    duration=5.0,
+                    steps=4,
+                    cfg=1.0,
+                    cfg_sweep_text="1.0, 2.0",
+                    is_sweep="Single",
+                    embed_metadata=True,
+                    seed=42,
+                    audio_mode="Audio-to-Audio (Remix)",
+                    source_audio=None,
+                )
+            )
+
+        seen_seeds = []
+
+        def fake_gen(config, progress=None, status_callback=None, cancel_event=None):
+            seen_seeds.append(config.seed)
+            return GenerationResult(
+                output_path=f"outputs/s_{config.seed}.wav",
+                status_message="ok",
+                duration=config.duration,
+                elapsed=0.1,
+                speed=10.0,
+                seed=config.seed,
+            )
+
+        with patch("app.generate_audio", side_effect=fake_gen):
+            outputs = list(
+                generate(
+                    model_name="small-sfx",
+                    prompt="ocean waves",
+                    negative_prompt="",
+                    duration=5.0,
+                    steps=4,
+                    cfg=1.5,
+                    cfg_sweep_text="1.0, 2.0",
+                    is_sweep="Seed Batch",
+                    embed_metadata=True,
+                    seed=100,
+                    seed_batch_count=3,
+                )
+            )
+
+        self.assertEqual(seen_seeds, [100, 101, 102])
+        last = outputs[-1]
+        self.assertEqual(last[1]["value"], "outputs/s_100.wav")
+        self.assertEqual(last[2]["value"], "outputs/s_101.wav")
+        self.assertEqual(last[3]["value"], "outputs/s_102.wav")
+        self.assertIn("Completed Seed Batch: 3 variations", last[-1])
+
+    def test_mcp_and_download_models_helpers(self):
+        import download_models
+        import mcp_server
+
+        args = download_models.parse_args(["--models", "small-sfx", "--force"])
+        self.assertEqual(args.models, ["small-sfx"])
+        self.assertTrue(args.force)
+
+        models_info = mcp_server.list_models_tool()
+        self.assertIn("loaded_model", models_info)
+        self.assertEqual(len(models_info["models"]), 3)
+
+        unload_res = mcp_server.unload_model_tool()
+        self.assertIn("status", unload_res)
+
+        recent = mcp_server.list_recent_outputs_tool(limit=5)
+        self.assertIsInstance(recent, list)
 
 
 if __name__ == "__main__":

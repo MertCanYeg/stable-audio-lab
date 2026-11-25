@@ -34,6 +34,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg-scale", type=float, default=1.0, help="Classifier-free guidance scale")
     parser.add_argument("--seed", type=int, default=-1, help="Random seed (-1 for random)")
     parser.add_argument("--output", "-o", type=str, default=None, help="Output .wav path")
+    parser.add_argument("--init-audio", type=str, default=None, help="Source audio path for Audio-to-Audio remix")
+    parser.add_argument("--init-noise-level", type=float, default=0.7, help="Remix noise strength in (0.0, 1.0]")
+    parser.add_argument("--inpaint-audio", type=str, default=None, help="Source audio path for inpainting")
+    parser.add_argument("--inpaint-start", type=float, default=None, help="Inpaint start time in seconds")
+    parser.add_argument("--inpaint-end", type=float, default=None, help="Inpaint end time in seconds")
+    parser.add_argument("--normalize", action="store_true", help="Peak normalize output WAV to -1.0 dBFS")
+    parser.add_argument("--fade-out", type=float, default=0.0, help="Apply fade-out over the last N seconds")
     parser.add_argument("--no-metadata", action="store_false", dest="embed_metadata", default=True, help="Disable embedding generation metadata in output WAV")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print full traceback on errors")
     return parser.parse_args()
@@ -57,6 +64,13 @@ def main() -> int:
         seed=args.seed,
         output_path=args.output,
         embed_metadata=args.embed_metadata,
+        init_audio_path=args.init_audio,
+        init_noise_level=args.init_noise_level,
+        inpaint_audio_path=args.inpaint_audio,
+        inpaint_start=args.inpaint_start,
+        inpaint_end=args.inpaint_end,
+        normalize_audio=args.normalize,
+        fade_out_seconds=args.fade_out,
     )
 
     print(f"\nStable Audio 3 CLI | {get_device_info()}")
