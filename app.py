@@ -7,6 +7,7 @@ import gc
 import queue
 import random
 import threading
+import time
 from dotenv import load_dotenv
 import gradio as gr
 import torch
@@ -15,11 +16,17 @@ load_dotenv()
 
 from core import (
     MODELS,
+    GenerationCancelledError,
     GenerationConfig,
+    GenerationError,
     StableAudioError,
+    check_model_cache,
     generate_audio,
     get_device_info,
+    list_recent_outputs,
     parse_cfg_sweep,
+    read_wav_metadata,
+    unload_model,
     validate_cfg_sweep,
 )
 
@@ -376,6 +383,20 @@ CUSTOM_CSS = """
     flex-direction: column !important;
     gap: 8px !important;
 }
+.header-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    margin-bottom: 6px !important;
+}
+.header-row button {
+    white-space: nowrap !important;
+}
+.history-table {
+    max-height: 360px !important;
+    overflow-y: auto !important;
+}
 """
 
 TAB_CONFIG = [
@@ -448,6 +469,11 @@ def generate(
                 updates.append(gr.update(value=None, visible=False))
         return updates
 
+    def queue_progress(value, desc=None, unit=None):
+        q.put(("progress", (value, desc, unit)))
+
+    cancel_event = threading.Event()
+
     def worker():
         try:
             if not is_sweep:
@@ -464,14 +490,17 @@ def generate(
                 config.validate()
                 result = generate_audio(
                     config=config,
-                    progress=progress,
+                    progress=queue_progress,
                     status_callback=lambda msg: q.put(("status", msg)),
+                    cancel_event=cancel_event,
                 )
                 q.put(("done_single", result))
             else:
                 shared_seed = random.randint(0, 2**31 - 1) if (seed is None or int(seed) == -1) else int(seed)
                 q.put(("status", f"[sweep] Starting CFG Sweep ({len(cfgs)} variations) | Shared Seed: {shared_seed}"))
                 for idx, c_val in enumerate(cfgs):
+                    if cancel_event.is_set():
+                        raise GenerationCancelledError("Generation cancelled.")
                     q.put(("status", f"\n[variation {idx + 1}/{len(cfgs)}] CFG: {c_val} (Seed: {shared_seed})"))
                     var_cfg = GenerationConfig(
                         model_name=model_name,
@@ -486,11 +515,14 @@ def generate(
                     var_cfg.validate()
                     res = generate_audio(
                         config=var_cfg,
-                        progress=progress,
+                        progress=queue_progress,
                         status_callback=lambda msg: q.put(("status", msg)),
+                        cancel_event=cancel_event,
                     )
                     q.put(("done_variation", (idx, res)))
                 q.put(("done_sweep", (len(cfgs), shared_seed)))
+        except GenerationCancelledError as e:
+            q.put(("cancelled", str(e)))
         except Exception as e:
             q.put(("error", e))
 
@@ -498,68 +530,103 @@ def generate(
     thread.start()
 
     active_sampling_bar = None
+    last_activity_time = time.time()
+    stage_start_time = time.time()
 
-    while True:
-        try:
-            event_type, payload = q.get(timeout=0.05)
-        except queue.Empty:
-            if not thread.is_alive() and q.empty():
+    try:
+        while True:
+            try:
+                event_type, payload = q.get(timeout=0.1)
+            except queue.Empty:
+                if not thread.is_alive() and q.empty():
+                    break
+                now = time.time()
+                if now - last_activity_time >= 2.0 and active_sampling_bar is None and logs:
+                    last_activity_time = now
+                    elapsed_s = int(now - stage_start_time)
+                    heartbeat_logs = list(logs)
+                    heartbeat_logs[-1] = f"{heartbeat_logs[-1]} ({elapsed_s}s)"
+                    yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), "\n".join(heartbeat_logs)
+                continue
+
+            last_activity_time = time.time()
+
+            if event_type == "progress":
+                val, desc, unit = payload
+                if progress is not None:
+                    if unit is not None:
+                        progress(val, desc=desc, unit=unit)
+                    else:
+                        progress(val, desc=desc)
+
+            elif event_type == "status":
+                if logs == [init_msg]:
+                    logs.clear()
+
+                if payload.startswith("[sampling]"):
+                    active_sampling_bar = payload
+                else:
+                    logs.append(payload)
+                    active_sampling_bar = None
+                    stage_start_time = time.time()
+
+                display_text = "\n".join(logs)
+                if active_sampling_bar:
+                    display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
+                yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), display_text
+
+            elif event_type == "done_single":
+                summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
+                yield payload.output_path, *([gr.update(value=None)] * 5), summary_display
                 break
-            continue
 
-        if event_type == "status":
-            if logs == [init_msg]:
-                logs.clear()
+            elif event_type == "done_variation":
+                idx, res = payload
+                if idx < len(sweep_files):
+                    sweep_files[idx] = res.output_path
+                display_text = "\n".join(logs)
+                yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), display_text
 
-            if payload.startswith("[sampling]"):
-                active_sampling_bar = payload
-            else:
-                logs.append(payload)
-                active_sampling_bar = None
+            elif event_type == "done_sweep":
+                total_vars, s_seed = payload
+                summary_display = f"{chr(10).join(logs)}\n\n✅ Completed CFG Sweep: {total_vars} variations generated with Seed {s_seed}."
+                yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), summary_display
+                break
 
-            display_text = "\n".join(logs)
-            if active_sampling_bar:
-                display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
-            yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), display_text
+            elif event_type == "cancelled":
+                cancel_msg = f"⏹️ {payload or 'Generation cancelled.'}"
+                display_text = f"{chr(10).join(logs)}\n\n{cancel_msg}" if logs else cancel_msg
+                yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), display_text
+                break
 
-        elif event_type == "done_single":
-            summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
-            yield payload.output_path, *([gr.update(value=None)] * 5), summary_display
-            break
-
-        elif event_type == "done_variation":
-            idx, res = payload
-            if idx < len(sweep_files):
-                sweep_files[idx] = res.output_path
-            display_text = "\n".join(logs)
-            yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), display_text
-
-        elif event_type == "done_sweep":
-            total_vars, s_seed = payload
-            summary_display = f"{chr(10).join(logs)}\n\n✅ Completed CFG Sweep: {total_vars} variations generated with Seed {s_seed}."
-            yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), summary_display
-            break
-
-        elif event_type == "error":
-            err = payload
-            if isinstance(err, StableAudioError):
-                err_msg = f"❌ Error: {err}"
-                yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
-                raise gr.Error(str(err)) from err
-            elif isinstance(err, torch.cuda.OutOfMemoryError):
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                oom_msg = (
-                    f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
-                    f"Try reducing duration or switching to a smaller model."
-                )
-                yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
-                raise gr.Error(oom_msg) from err
-            else:
-                err_msg = f"❌ Generation failed: {err}"
-                yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
-                raise gr.Error(err_msg) from err
+            elif event_type == "error":
+                err = payload
+                if isinstance(err, StableAudioError):
+                    err_msg = f"❌ Error: {err}"
+                    yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
+                    raise gr.Error(str(err)) from err
+                elif isinstance(err, torch.cuda.OutOfMemoryError):
+                    unload_model()
+                    oom_msg = (
+                        f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
+                        f"Model cache cleared; try reducing duration or switching to a smaller model."
+                    )
+                    yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
+                    raise gr.Error(oom_msg) from err
+                elif isinstance(err, MemoryError):
+                    unload_model()
+                    ram_msg = (
+                        f"❌ System RAM exhausted loading or running '{model_name}'. "
+                        f"Close other memory-heavy apps or switch to a smaller model."
+                    )
+                    yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), f"{chr(10).join(logs)}\n\n{ram_msg}" if logs else ram_msg
+                    raise gr.Error(ram_msg) from err
+                else:
+                    err_msg = f"❌ Generation failed: {err}"
+                    yield None, *(_sweep_updates(sweep_files, cfgs, is_sweep)), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
+                    raise gr.Error(err_msg) from err
+    finally:
+        cancel_event.set()
 
 
 def build_model_tab(
@@ -570,8 +637,12 @@ def build_model_tab(
 ):
     """Build UI layout and bindings for a specific model tab."""
     spec = MODELS[model_name]
+    cache_st = check_model_cache(model_name)
 
-    banner = f"**{spec.name}** | Repo: `{spec.repo_id}` | Max Duration: {spec.max_duration:.0f}s | Audio: 44.1 kHz Stereo"
+    banner = (
+        f"**{spec.name}** | Repo: `{spec.repo_id}` | Max Duration: {spec.max_duration:.0f}s | "
+        f"Audio: 44.1 kHz Stereo | Cache: {cache_st.status_text}"
+    )
     gr.Markdown(banner, elem_classes=["model-info-banner"])
 
     with gr.Row():
@@ -651,6 +722,12 @@ def build_model_tab(
                     variant="primary",
                     size="lg",
                     scale=4,
+                )
+                stop_btn = gr.Button(
+                    "⏹️ Stop",
+                    variant="stop",
+                    size="lg",
+                    scale=1,
                 )
                 clear_btn = gr.Button(
                     "🗑️ Clear Output",
@@ -795,7 +872,7 @@ def build_model_tab(
         ],
     )
 
-    generate_btn.click(
+    gen_event = generate_btn.click(
         fn=functools.partial(generate, model_name),
         inputs=[
             prompt,
@@ -818,6 +895,8 @@ def build_model_tab(
             status,
         ],
     )
+
+    stop_btn.click(fn=None, cancels=[gen_event])
 
     def reset_all():
         return (
@@ -857,23 +936,230 @@ def build_model_tab(
             examples_per_page=100,
         )
 
+    return {
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "duration": duration,
+        "steps": steps,
+        "cfg": cfg,
+        "cfg_sweep_toggle": cfg_sweep_toggle,
+        "seed": seed,
+    }
+
+
+def _format_history_rows(records: list[dict]) -> list[list[str]]:
+    """Format output records into table rows for the History dataframe."""
+    rows = []
+    for rec in records:
+        prompt_text = rec.get("prompt") or "(no embedded metadata)"
+        if len(prompt_text) > 70:
+            prompt_text = prompt_text[:67] + "..."
+        dur = f"{rec['duration']:.0f}s" if rec.get("duration") is not None else "-"
+        cfg_val = f"{rec['cfg_scale']}" if rec.get("cfg_scale") is not None else "-"
+        seed_val = f"{rec['seed']}" if rec.get("seed") is not None else "-"
+        rows.append(
+            [
+                rec["created"],
+                rec.get("model") or "-",
+                dur,
+                cfg_val,
+                seed_val,
+                prompt_text,
+                f"{rec['filename']} ({rec['size_str']})",
+            ]
+        )
+    return rows
+
+
+def _format_metadata_summary(rec: dict) -> str:
+    """Format full record details for the History metadata inspector."""
+    if not rec.get("has_metadata"):
+        return (
+            f"File: {rec['filename']} ({rec['size_str']})\n"
+            f"Created: {rec['created']}\n\n"
+            "No embedded Stable Audio Lab metadata found in this WAV file."
+        )
+    lines = [
+        f"File: {rec['filename']} ({rec['size_str']})",
+        f"Created: {rec['created']}",
+        f"Model: {rec.get('model') or '-'} | Duration: {rec.get('duration')}s | "
+        f"Steps: {rec.get('steps')} | CFG: {rec.get('cfg_scale')} | Seed: {rec.get('seed')}",
+        f"Prompt: {rec.get('prompt') or ''}",
+    ]
+    if rec.get("negative_prompt"):
+        lines.append(f"Negative Prompt: {rec['negative_prompt']}")
+    return "\n".join(lines)
+
 
 def create_app():
     """Create the root Gradio Blocks application."""
     with gr.Blocks(title="Stable Audio Lab") as demo:
         demo.load(None, js=AUTO_SCROLL_JS)
         gr.Markdown("# Stable Audio Lab")
-        gr.Markdown(f"*{get_device_info()}*")
+        with gr.Row(elem_classes=["header-row"]):
+            gr.Markdown(f"*{get_device_info()}*")
+            unload_btn = gr.Button(
+                "🧹 Unload Model / Free VRAM",
+                variant="secondary",
+                size="sm",
+                scale=0,
+            )
 
-        with gr.Tabs():
+        def on_unload_model():
+            try:
+                evicted = unload_model()
+            except GenerationError as e:
+                gr.Warning(str(e))
+                return
+            if evicted:
+                gr.Info(f"Unloaded '{evicted}' and cleared VRAM cache.")
+            else:
+                gr.Info("No model was loaded; memory cache cleared.")
+
+        unload_btn.click(fn=on_unload_model, inputs=[], outputs=[])
+
+        tab_controls: dict[str, dict] = {}
+        with gr.Tabs() as main_tabs:
             for model_name, placeholder, neg_placeholder, neg_info in TAB_CONFIG:
-                with gr.Tab(model_name):
-                    build_model_tab(
+                with gr.Tab(model_name, id=model_name):
+                    tab_controls[model_name] = build_model_tab(
                         model_name,
                         placeholder,
                         neg_placeholder,
                         neg_info,
                     )
+
+            with gr.Tab("History", id="history") as history_tab:
+                history_state = gr.State([])
+                selected_wav_state = gr.State(None)
+
+                with gr.Row(elem_classes=["action-btn-row"]):
+                    refresh_history_btn = gr.Button("🔄 Refresh History", variant="secondary", scale=1)
+                    load_settings_btn = gr.Button(
+                        "📥 Load Settings into Tab",
+                        variant="primary",
+                        interactive=False,
+                        scale=2,
+                    )
+
+                with gr.Row():
+                    history_audio = gr.Audio(label="Selected Output Preview", type="filepath", interactive=False)
+                    history_meta = gr.Textbox(
+                        label="Embedded Generation Metadata",
+                        value="Select a WAV row below to inspect its settings.",
+                        interactive=False,
+                        lines=6,
+                        max_lines=8,
+                        elem_classes=["status-console"],
+                    )
+
+                history_table = gr.Dataframe(
+                    headers=["Created", "Model", "Duration", "CFG", "Seed", "Prompt", "File"],
+                    datatype=["str", "str", "str", "str", "str", "str", "str"],
+                    interactive=False,
+                    wrap=False,
+                    elem_classes=["history-table"],
+                )
+
+                def refresh_history():
+                    records = list_recent_outputs()
+                    return (
+                        _format_history_rows(records),
+                        records,
+                        None,
+                        None,
+                        "Select a WAV row below to inspect its settings.",
+                        gr.update(interactive=False),
+                    )
+
+                def on_select_row(records: list[dict], evt: gr.SelectData):
+                    row_idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+                    if not records or row_idx is None or row_idx < 0 or row_idx >= len(records):
+                        return None, None, "Select a WAV row below to inspect its settings.", gr.update(interactive=False)
+                    rec = records[row_idx]
+                    return (
+                        rec["path"],
+                        rec["path"],
+                        _format_metadata_summary(rec),
+                        gr.update(interactive=bool(rec.get("has_metadata") and rec.get("model") in MODELS)),
+                    )
+
+                tab_order = [m for m, _, _, _ in TAB_CONFIG]
+                tab_output_components = []
+                for m in tab_order:
+                    ctrl = tab_controls[m]
+                    tab_output_components.extend(
+                        [
+                            ctrl["prompt"],
+                            ctrl["negative_prompt"],
+                            ctrl["duration"],
+                            ctrl["steps"],
+                            ctrl["cfg"],
+                            ctrl["cfg_sweep_toggle"],
+                            ctrl["seed"],
+                        ]
+                    )
+
+                def on_load_settings(selected_path: str | None):
+                    noop = [gr.update()] * (1 + len(tab_order) * 7)
+                    if not selected_path:
+                        gr.Warning("Please select an output file first.")
+                        return tuple(noop)
+                    meta = read_wav_metadata(selected_path)
+                    if not meta:
+                        gr.Warning("Selected WAV has no embedded generation metadata.")
+                        return tuple(noop)
+                    target_model = meta.get("model")
+                    if target_model not in MODELS:
+                        gr.Warning(f"Unknown model '{target_model}' in WAV metadata.")
+                        return tuple(noop)
+
+                    spec = MODELS[target_model]
+                    dur_val = max(1, min(int(spec.max_duration), round(float(meta.get("duration", spec.default_duration)))))
+                    steps_val = max(4, min(50, int(meta.get("steps", 8))))
+                    cfg_val = max(1.0, min(15.0, float(meta.get("cfg_scale", 1.0))))
+                    seed_val = int(meta.get("seed", -1))
+
+                    updates: list = [gr.Tabs(selected=target_model)]
+                    for m in tab_order:
+                        if m == target_model:
+                            updates.extend(
+                                [
+                                    str(meta.get("prompt", "")),
+                                    str(meta.get("negative_prompt", "") or ""),
+                                    dur_val,
+                                    steps_val,
+                                    cfg_val,
+                                    False,
+                                    seed_val,
+                                ]
+                            )
+                        else:
+                            updates.extend([gr.update()] * 7)
+
+                    gr.Info(f"Loaded settings into '{target_model}' tab.")
+                    return tuple(updates)
+
+                history_outputs = [
+                    history_table,
+                    history_state,
+                    selected_wav_state,
+                    history_audio,
+                    history_meta,
+                    load_settings_btn,
+                ]
+                history_tab.select(fn=refresh_history, inputs=[], outputs=history_outputs)
+                refresh_history_btn.click(fn=refresh_history, inputs=[], outputs=history_outputs)
+                history_table.select(
+                    fn=on_select_row,
+                    inputs=[history_state],
+                    outputs=[selected_wav_state, history_audio, history_meta, load_settings_btn],
+                )
+                load_settings_btn.click(
+                    fn=on_load_settings,
+                    inputs=[selected_wav_state],
+                    outputs=[main_tabs, *tab_output_components],
+                )
 
     return demo
 
@@ -886,6 +1172,7 @@ def main():
     args = parser.parse_args()
 
     demo = create_app()
+    demo.queue(default_concurrency_limit=1)
     demo.launch(
         server_name=args.host,
         server_port=args.port,

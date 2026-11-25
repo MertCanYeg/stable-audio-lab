@@ -15,3 +15,7 @@ class ModelDownloadError(StableAudioError, RuntimeError):
 
 class GenerationError(StableAudioError, ValueError):
     """Raised when audio generation parameters are invalid or inference fails."""
+
+
+class GenerationCancelledError(StableAudioError):
+    """Raised when audio generation is cancelled by the user or client disconnect."""

@@ -18,7 +18,8 @@ import soundfile as sf
 import torch
 from tqdm import tqdm
 
-from core.exceptions import GenerationError
+from core.exceptions import GenerationCancelledError, GenerationError
+from core.registry import get_model_spec
 from core.storage import ensure_model_ready
 
 _MODEL_CACHE: dict = {}
@@ -137,9 +138,11 @@ class GenerationConfig:
     seed: int = -1
     output_path: Optional[Union[str, Path]] = None
     embed_metadata: bool = True
+    chunked_decode: Optional[bool] = None
 
     def validate(self) -> None:
-        """Validate generation parameters, raising GenerationError on failure."""
+        """Validate generation parameters, raising StableAudioError on failure."""
+        get_model_spec(self.model_name)
         if not self.prompt or not self.prompt.strip():
             raise GenerationError("Please enter a text prompt.")
         if self.duration <= 0:
@@ -176,13 +179,52 @@ def _emit_log(msg: str, status_cb: Optional[Callable[[str], None]] = None) -> No
         status_cb(msg)
 
 
+def _check_cancelled(cancel_event: Optional[threading.Event]) -> None:
+    """Raise GenerationCancelledError if cancellation was requested."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise GenerationCancelledError("Generation cancelled.")
+
+
+def get_loaded_model_name() -> Optional[str]:
+    """Return the name of the currently cached model, or None if none is loaded."""
+    return next(iter(_MODEL_CACHE), None)
+
+
+def _clear_model_cache() -> Optional[str]:
+    """Evict the cached model from memory and reclaim CUDA/CPU allocations."""
+    if not _MODEL_CACHE:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return None
+    evicted = next(iter(_MODEL_CACHE))
+    _MODEL_CACHE.clear()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return evicted
+
+
+def unload_model() -> Optional[str]:
+    """Thread-safely evict the cached model from memory, raising GenerationError if busy."""
+    if not _INFERENCE_LOCK.acquire(blocking=False):
+        raise GenerationError("Cannot unload model while generation is in progress. Stop generation first.")
+    try:
+        return _clear_model_cache()
+    finally:
+        _INFERENCE_LOCK.release()
+
+
 def load_model(
     model_name: str,
     use_half: bool = True,
     progress=None,
     status_callback: Optional[Callable[[str], None]] = None,
+    cancel_event: Optional[threading.Event] = None,
 ):
     """Load model weights into GPU memory with granular stage-by-stage progress reporting."""
+    _check_cancelled(cancel_event)
+
     if model_name in _MODEL_CACHE:
         cached_msg = f"[load] Using cached '{model_name}' ({'fp16' if use_half and torch.cuda.is_available() else 'fp32'})."
         _emit_log(cached_msg, status_callback)
@@ -197,12 +239,10 @@ def load_model(
         prev_name = next(iter(_MODEL_CACHE))
         evict_msg = f"[load] Evicting '{prev_name}' from memory to load '{model_name}'..."
         _emit_log(evict_msg, status_callback)
-        _MODEL_CACHE.clear()
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _clear_model_cache()
 
     ensure_model_ready(model_name)
+    _check_cancelled(cancel_event)
 
     from stable_audio_3.factory import create_diffusion_cond_from_config
     from stable_audio_3.loading_utils import copy_state_dict
@@ -214,42 +254,61 @@ def load_model(
         model_config = json.load(f)
 
     t0 = time.time()
+    model = None
+    sd = None
 
-    # Stage 1: Architecture & T5 conditioner
-    stage1_msg = f"[load] [1/4] Building '{model_name}' architecture & text encoder..."
-    if progress:
-        progress(0.0, desc=stage1_msg)
-    _emit_log(stage1_msg, status_callback)
-    model = create_diffusion_cond_from_config(model_config)
+    try:
+        # Stage 1: Architecture & T5 conditioner
+        _check_cancelled(cancel_event)
+        stage1_msg = f"[load] [1/4] Building '{model_name}' architecture & text encoder..."
+        if progress:
+            progress(None, desc=stage1_msg)
+        _emit_log(stage1_msg, status_callback)
+        model = create_diffusion_cond_from_config(model_config)
 
-    # Stage 2: Reading safetensors weights from disk
-    if progress:
-        progress(0.0, desc=f"[load] [2/4] Reading safetensors weights from disk...")
-    t_read = time.time()
-    sd = load_file(ckpt_path)
-    stage2_done = f"[load] [2/4] Read {len(sd)} weights from disk in {time.time()-t_read:.2f}s."
-    _emit_log(stage2_done, status_callback)
+        # Stage 2: Reading safetensors weights from disk
+        _check_cancelled(cancel_event)
+        if progress:
+            progress(None, desc="[load] [2/4] Reading safetensors weights from disk...")
+        t_read = time.time()
+        sd = load_file(ckpt_path)
+        stage2_done = f"[load] [2/4] Read {len(sd)} weights from disk in {time.time()-t_read:.2f}s."
+        _emit_log(stage2_done, status_callback)
 
-    # Stage 3: Mapping state dict
-    if progress:
-        progress(0.0, desc=f"[load] [3/4] Mapping weights into model...")
-    t_copy = time.time()
-    copy_state_dict(model, sd)
-    stage3_done = f"[load] [3/4] Mapped {len(sd)} weights in {time.time()-t_copy:.2f}s."
-    _emit_log(stage3_done, status_callback)
-    del sd
-    gc.collect()
+        # Stage 3: Mapping state dict
+        _check_cancelled(cancel_event)
+        if progress:
+            progress(None, desc="[load] [3/4] Mapping weights into model...")
+        t_copy = time.time()
+        copy_state_dict(model, sd)
+        stage3_done = f"[load] [3/4] Mapped {len(sd)} weights in {time.time()-t_copy:.2f}s."
+        _emit_log(stage3_done, status_callback)
+        del sd
+        sd = None
+        gc.collect()
 
-    # Stage 4: Transfer to device
-    stage4_start = f"[load] [4/4] Transferring weights to {device.upper()} ({precision})..."
-    if progress:
-        progress(0.0, desc=stage4_start)
-    t_xfer = time.time()
-    model.to(device).eval().requires_grad_(False)
-    if half:
-        model.to(torch.float16)
-    stage4_done = f"[load] [4/4] Transferred to {device.upper()} in {time.time()-t_xfer:.2f}s."
-    _emit_log(stage4_done, status_callback)
+        # Stage 4: Transfer to device (cast directly to fp16 during transfer to avoid fp32 VRAM spike)
+        _check_cancelled(cancel_event)
+        stage4_start = f"[load] [4/4] Transferring weights to {device.upper()} ({precision})..."
+        if progress:
+            progress(None, desc=stage4_start)
+        t_xfer = time.time()
+        model.eval().requires_grad_(False)
+        if half:
+            model.to(device=device, dtype=torch.float16)
+        else:
+            model.to(device=device)
+        stage4_done = f"[load] [4/4] Transferred to {device.upper()} in {time.time()-t_xfer:.2f}s."
+        _emit_log(stage4_done, status_callback)
+    except Exception:
+        if sd is not None:
+            del sd
+        if model is not None:
+            del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise
 
     wrapped = StableAudioModel(model, model_config, device, half)
     wrapped.use_lora = False
@@ -279,6 +338,7 @@ def generate_audio(
     step_callback: Optional[Callable[[int, int], None]] = None,
     status_callback: Optional[Callable[[str], None]] = None,
     config: Optional[GenerationConfig] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> GenerationResult:
     """Generate audio from text prompt with reproducible seed and 16-bit PCM WAV export.
 
@@ -301,6 +361,7 @@ def generate_audio(
         )
 
     cfg.validate()
+    _check_cancelled(cancel_event)
     prompt_clean = cfg.prompt.strip()
     resolved_seed = cfg.resolve_seed()
     neg = cfg.negative_prompt.strip() if cfg.negative_prompt and cfg.negative_prompt.strip() else None
@@ -320,19 +381,31 @@ def generate_audio(
         _emit_log(f"[generate] negative=\"{neg_display}\"", status_callback)
     print(f"{'=' * 60}")
 
-    with _INFERENCE_LOCK:
+    if not _INFERENCE_LOCK.acquire(blocking=False):
+        _emit_log("[queue] Waiting for previous generation to finish...", status_callback)
+        while not _INFERENCE_LOCK.acquire(timeout=0.1):
+            _check_cancelled(cancel_event)
+
+    try:
         start_time = time.time()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
         # Stage 1: Granular Model loading
-        model = load_model(cfg.model_name, progress=progress, status_callback=status_callback)
+        model = load_model(
+            cfg.model_name,
+            progress=progress,
+            status_callback=status_callback,
+            cancel_event=cancel_event,
+        )
         sample_size = model.model_config.get("sample_size", 5292032)
         load_elapsed = time.time() - start_time
 
+        _check_cancelled(cancel_event)
+
         # Stage 2: Text encoding + diffusion sampling
         if progress:
-            progress(0.0, desc="Encoding text prompt with T5 conditioning...")
+            progress(None, desc="Encoding text prompt with T5 conditioning...")
         encode_msg = f"[generate] Encoding prompt and starting diffusion sampling ({total_steps} steps)..."
         _emit_log(encode_msg, status_callback)
 
@@ -344,6 +417,7 @@ def generate_audio(
 
         def _on_step(info: dict):
             nonlocal pbar, first_step_time, diffusion_start, diffusion_elapsed, diffusion_end
+            _check_cancelled(cancel_event)
             now = time.time()
             current = info.get("i", 0) + 1
 
@@ -354,6 +428,7 @@ def generate_audio(
             pbar.refresh()
             if current >= total_steps:
                 pbar.close()
+                pbar = None
                 diffusion_end = now
 
             # External caller callback (if provided)
@@ -391,94 +466,103 @@ def generate_audio(
                     f"[sampling] Step {current}/{total_steps} ({pct}%) [{bar}]{status_suffix}"
                 )
 
-            # Gradio progress tracking
+            # Gradio progress tracking (step tuple preserves live iteration metrics & ETA)
             if progress:
-                step_ratio = current / total_steps
-                progress(step_ratio, desc=f"Sampling: step {current}/{total_steps} ({int(step_ratio * 100)}%)")
+                progress((current, total_steps), desc=f"Sampling [{cfg.model_name}]", unit="steps")
 
-        audio = model.generate(
-            prompt=prompt_clean,
-            negative_prompt=neg,
-            duration=float(cfg.duration),
-            steps=total_steps,
-            cfg_scale=float(cfg.cfg_scale),
-            seed=resolved_seed,
-            sample_size=sample_size,
-            chunked_decode=False,
-            callback=_on_step,
-            disable_tqdm=True,
-        )
+        audio = None
+        try:
+            audio = model.generate(
+                prompt=prompt_clean,
+                negative_prompt=neg,
+                duration=float(cfg.duration),
+                steps=total_steps,
+                cfg_scale=float(cfg.cfg_scale),
+                seed=resolved_seed,
+                sample_size=sample_size,
+                chunked_decode=cfg.chunked_decode,
+                callback=_on_step,
+                disable_tqdm=True,
+            )
+        finally:
+            if pbar is not None:
+                pbar.close()
+                pbar = None
 
-        if diffusion_elapsed <= 0.0 and diffusion_start is not None and diffusion_end is not None:
-            diffusion_elapsed = max(0.01, diffusion_end - diffusion_start)
-        elif diffusion_elapsed <= 0.0:
-            diffusion_elapsed = max(0.01, time.time() - start_time - load_elapsed)
+        try:
+            _check_cancelled(cancel_event)
 
-        sample_speed = total_steps / diffusion_elapsed if diffusion_elapsed > 0 else 0.0
-        sample_done_msg = (
-            f"[generate] Sampling completed in {diffusion_elapsed:.2f}s "
-            f"({sample_speed:.1f} steps/s)"
-        )
-        print()
-        _emit_log(sample_done_msg, status_callback)
+            if diffusion_elapsed <= 0.0 and diffusion_start is not None and diffusion_end is not None:
+                diffusion_elapsed = max(0.01, diffusion_end - diffusion_start)
+            elif diffusion_elapsed <= 0.0:
+                diffusion_elapsed = max(0.01, time.time() - start_time - load_elapsed)
 
-        # Stage 3: Decode latents and export WAV
-        if progress:
-            progress(None, desc="Decoding audio latents and saving WAV...")
-        _emit_log("[generate] Decoding audio latents and saving WAV...", status_callback)
-        decode_start = time.time()
+            sample_speed = total_steps / diffusion_elapsed if diffusion_elapsed > 0 else 0.0
+            sample_done_msg = (
+                f"[generate] Sampling completed in {diffusion_elapsed:.2f}s "
+                f"({sample_speed:.1f} steps/s)"
+            )
+            print()
+            _emit_log(sample_done_msg, status_callback)
 
-        if cfg.output_path:
-            out_file = Path(cfg.output_path)
-            if out_file.suffix.lower() != ".wav":
-                out_file = out_file.with_suffix(".wav")
-            out_file.parent.mkdir(parents=True, exist_ok=True)
-        else:
-            out_dir = Path("outputs")
-            out_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            cfg_str = f"{cfg.cfg_scale:g}"
-            out_file = out_dir / f"{timestamp}_{cfg.model_name}_{slugify(prompt_clean)}_cfg{cfg_str}.wav"
+            # Stage 3: Decode latents and export WAV
+            if progress:
+                progress(None, desc="Decoding audio latents and saving WAV...")
+            _emit_log("[generate] Decoding audio latents and saving WAV...", status_callback)
+            decode_start = time.time()
 
-        sample_rate = model.model.sample_rate
-        audio_tensor = audio[0].detach().cpu().clamp(-1.0, 1.0)
-        audio_np = audio_tensor.numpy().T
-        channels = audio_np.shape[1] if audio_np.ndim > 1 else 1
+            if cfg.output_path:
+                out_file = Path(cfg.output_path)
+                if out_file.suffix.lower() != ".wav":
+                    out_file = out_file.with_suffix(".wav")
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                out_dir = Path("outputs")
+                out_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                cfg_str = f"{cfg.cfg_scale:g}"
+                out_file = out_dir / f"{timestamp}_{cfg.model_name}_{slugify(prompt_clean)}_cfg{cfg_str}.wav"
 
-        with sf.SoundFile(str(out_file), mode="w", samplerate=sample_rate, channels=channels, subtype="PCM_16") as f:
-            if cfg.embed_metadata:
-                meta = {
-                    "model": cfg.model_name,
-                    "prompt": prompt_clean,
-                    "negative_prompt": neg or "",
-                    "duration": float(cfg.duration),
-                    "steps": total_steps,
-                    "cfg_scale": float(cfg.cfg_scale),
-                    "seed": resolved_seed,
-                }
-                f.comment = json.dumps(meta)
-                f.title = prompt_clean[:100]
-                f.artist = "Stable Audio Lab"
-            f.write(audio_np)
+            sample_rate = model.model.sample_rate
+            audio_tensor = audio[0].detach().cpu().clamp(-1.0, 1.0)
+            audio_np = audio_tensor.numpy().T
+            channels = audio_np.shape[1] if audio_np.ndim > 1 else 1
 
-        # Total decode time: VAE latent decoding inside model.generate + disk write
-        if diffusion_end is not None:
-            decode_elapsed = time.time() - diffusion_end
-        else:
-            decode_elapsed = time.time() - decode_start
+            with sf.SoundFile(str(out_file), mode="w", samplerate=sample_rate, channels=channels, subtype="PCM_16") as f:
+                if cfg.embed_metadata:
+                    meta = {
+                        "model": cfg.model_name,
+                        "prompt": prompt_clean,
+                        "negative_prompt": neg or "",
+                        "duration": float(cfg.duration),
+                        "steps": total_steps,
+                        "cfg_scale": float(cfg.cfg_scale),
+                        "seed": resolved_seed,
+                    }
+                    f.comment = json.dumps(meta)
+                    f.title = prompt_clean[:100]
+                    f.artist = "Stable Audio Lab"
+                f.write(audio_np)
 
-        file_size = out_file.stat().st_size
+            # Total decode time: VAE latent decoding inside model.generate + disk write
+            if diffusion_end is not None:
+                decode_elapsed = time.time() - diffusion_end
+            else:
+                decode_elapsed = time.time() - decode_start
 
-        del audio
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            file_size = out_file.stat().st_size
+        finally:
+            if audio is not None:
+                del audio
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         if progress:
             progress(1.0, desc="Complete")
 
         total_elapsed = time.time() - start_time
-        speed = round(total_steps / total_elapsed, 1) if total_elapsed > 0 else 0.0
+        speed = round(sample_speed, 1)
 
         # Synchronized telemetry breakdown
         _emit_log(f"[generate] Decoded and saved in {decode_elapsed:.2f}s", status_callback)
@@ -498,7 +582,7 @@ def generate_audio(
 
         # UI status: clean user-facing summary
         status_msg = (
-            f"Generated {cfg.duration:.1f}s audio in {total_elapsed:.2f}s ({speed} it/s) | "
+            f"Generated {cfg.duration:.1f}s audio in {total_elapsed:.2f}s ({speed} steps/s) | "
             f"Model: {cfg.model_name} | Seed: {resolved_seed} | Saved: {out_file.name}"
         )
 
@@ -510,3 +594,65 @@ def generate_audio(
             speed=speed,
             seed=resolved_seed,
         )
+    finally:
+        _INFERENCE_LOCK.release()
+
+
+def read_wav_metadata(wav_path: Union[str, Path]) -> Optional[dict]:
+    """Read embedded JSON generation metadata from a WAV file's RIFF comment chunk."""
+    path = Path(wav_path)
+    if not path.is_file():
+        return None
+    try:
+        with sf.SoundFile(str(path)) as f:
+            raw_comment = f.comment
+        if not raw_comment:
+            return None
+        data = json.loads(raw_comment)
+        if isinstance(data, dict) and ("prompt" in data or "model" in data):
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def list_recent_outputs(output_dir: Union[str, Path] = "outputs", limit: int = 30) -> list[dict]:
+    """List recent WAV files in output_dir sorted newest-first with parsed metadata."""
+    root = Path(output_dir)
+    if not root.is_dir():
+        return []
+
+    wav_entries: list[tuple[float, Path]] = []
+    for p in root.glob("*.wav"):
+        try:
+            if p.is_file():
+                wav_entries.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+
+    wav_entries.sort(key=lambda item: item[0], reverse=True)
+
+    records: list[dict] = []
+    for mtime, p in wav_entries[:limit]:
+        try:
+            size_bytes = p.stat().st_size
+        except OSError:
+            continue
+        meta = read_wav_metadata(p)
+        records.append(
+            {
+                "path": str(p),
+                "filename": p.name,
+                "created": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "size_str": _format_bytes(size_bytes),
+                "has_metadata": meta is not None,
+                "model": str(meta.get("model", "")) if meta else "",
+                "prompt": str(meta.get("prompt", "")) if meta else "",
+                "negative_prompt": str(meta.get("negative_prompt", "")) if meta else "",
+                "duration": meta.get("duration") if meta else None,
+                "steps": meta.get("steps") if meta else None,
+                "cfg_scale": meta.get("cfg_scale") if meta else None,
+                "seed": meta.get("seed") if meta else None,
+            }
+        )
+    return records

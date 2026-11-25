@@ -50,15 +50,15 @@ def is_model_cached(model_name: str) -> bool:
     return check_model_cache(model_name).downloaded
 
 
-def download_model(
+def _download_model(
     model_name: str,
     force: bool = False,
     progress_callback: Optional[Callable[[float, str], None]] = None,
-) -> bool:
-    """Download model files from Hugging Face Hub with progress reporting."""
+) -> tuple[bool, Optional[str]]:
+    """Download model files from Hugging Face Hub, returning (success, error_detail)."""
     spec = get_model_spec(model_name)
     if not force and is_model_cached(model_name):
-        return True
+        return True, None
 
     total = len(MODEL_FILES)
     for idx, filename in enumerate(MODEL_FILES):
@@ -74,11 +74,21 @@ def download_model(
             print(f"Error: {err_msg}")
             if progress_callback:
                 progress_callback(0.0, err_msg)
-            return False
+            return False, err_msg
 
     if progress_callback:
         progress_callback(1.0, "Download complete")
-    return True
+    return True, None
+
+
+def download_model(
+    model_name: str,
+    force: bool = False,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+) -> bool:
+    """Download model files from Hugging Face Hub with progress reporting."""
+    ok, _ = _download_model(model_name, force=force, progress_callback=progress_callback)
+    return ok
 
 
 def ensure_model_ready(
@@ -90,10 +100,12 @@ def ensure_model_ready(
         print(f"[{model_name}] Weights not cached locally. Starting download...")
         if progress_callback:
             progress_callback(0.0, f"Downloading '{model_name}' weights from Hugging Face...")
-        if not download_model(model_name, progress_callback=progress_callback):
+        ok, err_detail = _download_model(model_name, progress_callback=progress_callback)
+        if not ok:
             spec = get_model_spec(model_name)
+            detail_suffix = f" ({err_detail})" if err_detail else ""
             raise ModelDownloadError(
-                f"Failed to download weights for '{model_name}'. "
+                f"Failed to download weights for '{model_name}'{detail_suffix}. "
                 f"Verify network connection and access at https://huggingface.co/{spec.repo_id}"
             )
     return True

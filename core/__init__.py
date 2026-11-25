@@ -2,6 +2,7 @@
 
 from core.compat import get_device_info, setup_environment
 from core.exceptions import (
+    GenerationCancelledError,
     GenerationError,
     ModelDownloadError,
     ModelNotFoundError,
@@ -23,9 +24,13 @@ from core.engine import (
     GenerationConfig,
     GenerationResult,
     generate_audio,
+    get_loaded_model_name,
+    list_recent_outputs,
     load_model,
     parse_cfg_sweep,
+    read_wav_metadata,
     slugify,
+    unload_model,
     validate_cfg_sweep,
 )
 
@@ -38,6 +43,7 @@ __all__ = [
     "ModelNotFoundError",
     "ModelDownloadError",
     "GenerationError",
+    "GenerationCancelledError",
     # Registry
     "MODELS",
     "ModelSpec",
@@ -51,9 +57,13 @@ __all__ = [
     # Engine
     "GenerationConfig",
     "GenerationResult",
+    "get_loaded_model_name",
     "load_model",
+    "unload_model",
     "generate_audio",
+    "list_recent_outputs",
     "parse_cfg_sweep",
+    "read_wav_metadata",
     "slugify",
     "validate_cfg_sweep",
 ]

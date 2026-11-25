@@ -8,7 +8,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from mcp.server import MCPServer
+
+load_dotenv()
 
 from core import GenerationConfig, StableAudioError, generate_audio
 

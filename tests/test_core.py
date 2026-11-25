@@ -4,14 +4,21 @@ import unittest
 
 from core.compat import get_device_info, setup_environment
 from core.engine import (
+    _INFERENCE_LOCK,
+    _MODEL_CACHE,
     GenerationConfig,
     GenerationResult,
     generate_audio,
+    get_loaded_model_name,
+    list_recent_outputs,
     parse_cfg_sweep,
+    read_wav_metadata,
     slugify,
+    unload_model,
     validate_cfg_sweep,
 )
 from core.exceptions import (
+    GenerationCancelledError,
     GenerationError,
     ModelNotFoundError,
     StableAudioError,
@@ -126,6 +133,10 @@ class TestGenerationConfig(unittest.TestCase):
     def test_invalid_cfg_raises(self):
         with self.assertRaises(GenerationError):
             GenerationConfig(prompt="rock", cfg_scale=-0.5).validate()
+
+    def test_invalid_model_raises(self):
+        with self.assertRaises(ModelNotFoundError):
+            GenerationConfig(model_name="nonexistent-model", prompt="rock").validate()
 
     def test_seed_resolution(self):
         cfg = GenerationConfig(prompt="rock", seed=-1)
@@ -284,6 +295,7 @@ class TestExceptions(unittest.TestCase):
     def test_hierarchy(self):
         self.assertTrue(issubclass(ModelNotFoundError, StableAudioError))
         self.assertTrue(issubclass(GenerationError, StableAudioError))
+        self.assertTrue(issubclass(GenerationCancelledError, StableAudioError))
         self.assertTrue(issubclass(ModelNotFoundError, ValueError))
         self.assertTrue(issubclass(GenerationError, ValueError))
 
@@ -355,6 +367,217 @@ class TestGenerationLifecycle(unittest.TestCase):
         self.assertIsNone(s4["value"])
         self.assertIsNone(s5["value"])
         self.assertIn("Initializing small-sfx", status)
+
+
+class TestRobustnessAndCancellation(unittest.TestCase):
+    """Test model unloading, cancellation, heartbeat, thread-safe progress, and OOM recovery."""
+
+    def tearDown(self):
+        _MODEL_CACHE.clear()
+
+    def test_unload_model_clears_cache(self):
+        self.assertIsNone(get_loaded_model_name())
+        _MODEL_CACHE["dummy"] = object()
+        self.assertEqual(get_loaded_model_name(), "dummy")
+        evicted = unload_model()
+        self.assertEqual(evicted, "dummy")
+        self.assertEqual(len(_MODEL_CACHE), 0)
+        self.assertIsNone(get_loaded_model_name())
+        self.assertIsNone(unload_model())
+
+    def test_unload_model_raises_when_inference_locked(self):
+        _INFERENCE_LOCK.acquire()
+        try:
+            with self.assertRaises(GenerationError):
+                unload_model()
+        finally:
+            _INFERENCE_LOCK.release()
+
+    def test_read_wav_metadata_and_list_recent_outputs(self):
+        import json
+        import os
+        import tempfile
+        import time
+        import numpy as np
+        import soundfile as sf
+
+        self.assertIsNone(read_wav_metadata("nonexistent_file_12345.wav"))
+        self.assertEqual(list_recent_outputs("nonexistent_dir_12345"), [])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wav1 = os.path.join(tmp_dir, "older_no_meta.wav")
+            wav2 = os.path.join(tmp_dir, "newer_with_meta.wav")
+
+            with sf.SoundFile(wav1, mode="w", samplerate=44100, channels=2, subtype="PCM_16") as f:
+                f.write(np.zeros((4410, 2), dtype=np.float32))
+
+            time.sleep(0.05)
+
+            meta = {
+                "model": "medium",
+                "prompt": "cinematic strings",
+                "negative_prompt": "distortion",
+                "duration": 30.0,
+                "steps": 8,
+                "cfg_scale": 2.0,
+                "seed": 999,
+            }
+            with sf.SoundFile(wav2, mode="w", samplerate=44100, channels=2, subtype="PCM_16") as f:
+                f.comment = json.dumps(meta)
+                f.write(np.zeros((4410, 2), dtype=np.float32))
+
+            self.assertIsNone(read_wav_metadata(wav1))
+            parsed = read_wav_metadata(wav2)
+            self.assertIsNotNone(parsed)
+            self.assertEqual(parsed["model"], "medium")
+            self.assertEqual(parsed["seed"], 999)
+
+            records = list_recent_outputs(tmp_dir, limit=10)
+            self.assertEqual(len(records), 2)
+            self.assertEqual(records[0]["filename"], "newer_with_meta.wav")
+            self.assertTrue(records[0]["has_metadata"])
+            self.assertEqual(records[0]["prompt"], "cinematic strings")
+            self.assertEqual(records[1]["filename"], "older_no_meta.wav")
+            self.assertFalse(records[1]["has_metadata"])
+
+    def test_generate_audio_cancelled_releases_lock(self):
+        import threading
+
+        cancel_event = threading.Event()
+        cancel_event.set()
+        with self.assertRaises(GenerationCancelledError):
+            generate_audio(
+                model_name="small-sfx",
+                prompt="ocean waves",
+                duration=5.0,
+                steps=4,
+                cancel_event=cancel_event,
+            )
+        # Lock must remain unheld after cancellation
+        acquired = _INFERENCE_LOCK.acquire(blocking=False)
+        self.assertTrue(acquired)
+        _INFERENCE_LOCK.release()
+
+    def test_app_generate_progress_proxy_and_heartbeat(self):
+        import time
+        from unittest.mock import patch
+        from app import generate
+
+        progress_calls = []
+
+        def fake_progress(value, desc=None, unit=None):
+            progress_calls.append((value, desc, unit))
+
+        def fake_generate_audio(config, progress=None, status_callback=None, cancel_event=None):
+            if status_callback:
+                status_callback("[load] [1/4] Building architecture...")
+            if progress:
+                progress(None, desc="Building...")
+            # Stay silent longer than the 2s heartbeat threshold
+            time.sleep(2.2)
+            if progress:
+                progress((1, 2), desc="Sampling", unit="steps")
+                progress((2, 2), desc="Sampling", unit="steps")
+            return GenerationResult(
+                output_path="outputs/fake.wav",
+                status_message="Generated 5.0s audio in 2.20s (4.0 steps/s) | Model: small-sfx | Seed: 42 | Saved: fake.wav",
+                duration=5.0,
+                elapsed=2.2,
+                speed=4.0,
+                seed=42,
+            )
+
+        with patch("app.generate_audio", side_effect=fake_generate_audio):
+            outputs = list(
+                generate(
+                    model_name="small-sfx",
+                    prompt="ocean waves",
+                    negative_prompt="",
+                    duration=5.0,
+                    steps=2,
+                    cfg=1.0,
+                    cfg_sweep_text="1.0, 2.0",
+                    is_sweep=False,
+                    embed_metadata=False,
+                    seed=42,
+                    progress=fake_progress,
+                )
+            )
+
+        # Verify progress events were executed on main thread with expected payloads
+        self.assertIn((None, "Building...", None), progress_calls)
+        self.assertIn(((1, 2), "Sampling", "steps"), progress_calls)
+        self.assertIn(((2, 2), "Sampling", "steps"), progress_calls)
+
+        # Verify at least one heartbeat update appended live elapsed seconds
+        statuses = [item[-1] for item in outputs]
+        self.assertTrue(any("Building architecture... (" in s and "s)" in s for s in statuses))
+        self.assertEqual(outputs[-1][0], "outputs/fake.wav")
+
+    def test_app_generate_sets_cancel_event_on_close(self):
+        import time
+        from unittest.mock import patch
+        from app import generate
+
+        captured = {}
+
+        def blocking_generate_audio(config, progress=None, status_callback=None, cancel_event=None):
+            captured["event"] = cancel_event
+            if status_callback:
+                status_callback("[load] [1/4] Working...")
+            while not cancel_event.is_set():
+                time.sleep(0.05)
+            raise GenerationCancelledError("Generation cancelled.")
+
+        with patch("app.generate_audio", side_effect=blocking_generate_audio):
+            gen = generate(
+                model_name="small-sfx",
+                prompt="ocean waves",
+                negative_prompt="",
+                duration=5.0,
+                steps=4,
+                cfg=1.0,
+                cfg_sweep_text="1.0, 2.0",
+                is_sweep=False,
+                embed_metadata=False,
+                seed=42,
+            )
+            next(gen)  # Initial clear (before worker starts)
+            next(gen)  # Worker started and entered try/finally loop
+            gen.close()
+            time.sleep(0.1)
+
+        self.assertIn("event", captured)
+        self.assertTrue(captured["event"].is_set())
+
+    def test_app_generate_oom_and_memory_error_recovery(self):
+        from unittest.mock import patch
+        import gradio as gr
+        import torch
+        from app import generate
+
+        for exc_cls in (torch.cuda.OutOfMemoryError, MemoryError):
+            _MODEL_CACHE["dummy"] = object()
+
+            def failing_generate_audio(config, progress=None, status_callback=None, cancel_event=None):
+                raise exc_cls("out of memory")
+
+            with patch("app.generate_audio", side_effect=failing_generate_audio):
+                gen = generate(
+                    model_name="small-sfx",
+                    prompt="ocean waves",
+                    negative_prompt="",
+                    duration=5.0,
+                    steps=4,
+                    cfg=1.0,
+                    cfg_sweep_text="1.0, 2.0",
+                    is_sweep=False,
+                    embed_metadata=False,
+                    seed=42,
+                )
+                with self.assertRaises(gr.Error):
+                    list(gen)
+            self.assertEqual(len(_MODEL_CACHE), 0)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Platform compatibility and hardware diagnostics for Stable Audio Lab."""
 
+import faulthandler
 import logging
 import os
 import sys
@@ -14,6 +15,11 @@ def setup_environment():
     global _INITIALIZED
     if _INITIALIZED:
         return
+
+    try:
+        faulthandler.enable()
+    except Exception:
+        pass
 
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
