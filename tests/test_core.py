@@ -138,6 +138,12 @@ class TestGenerationConfig(unittest.TestCase):
         with self.assertRaises(ModelNotFoundError):
             GenerationConfig(model_name="nonexistent-model", prompt="rock").validate()
 
+    def test_chunked_decode_default_true(self):
+        cfg = GenerationConfig(prompt="test")
+        self.assertTrue(cfg.chunked_decode)
+        cfg_off = GenerationConfig(prompt="test", chunked_decode=False)
+        self.assertFalse(cfg_off.chunked_decode)
+
     def test_seed_resolution(self):
         cfg = GenerationConfig(prompt="rock", seed=-1)
         resolved = cfg.resolve_seed()

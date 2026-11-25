@@ -138,7 +138,7 @@ class GenerationConfig:
     seed: int = -1
     output_path: Optional[Union[str, Path]] = None
     embed_metadata: bool = True
-    chunked_decode: Optional[bool] = None
+    chunked_decode: Optional[bool] = True
 
     def validate(self) -> None:
         """Validate generation parameters, raising StableAudioError on failure."""
