@@ -916,6 +916,18 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         recent = mcp_server.list_recent_outputs_tool(limit=5)
         self.assertIsInstance(recent, list)
 
+    def test_format_tqdm_stats_matches_terminal_units(self):
+        from core.engine import _format_tqdm_stats
+
+        slow = _format_tqdm_stats({"elapsed": 56.0, "rate": 1.0 / 11.36}, current=5, total_steps=16)
+        self.assertEqual(slow, "[00:56<02:04, 11.36s/step]")
+
+        fast = _format_tqdm_stats({"elapsed": 2.0, "rate": 2.5}, current=5, total_steps=10)
+        self.assertEqual(fast, "[00:02<00:02, 2.50step/s]")
+
+        initial = _format_tqdm_stats({"elapsed": 0.0, "rate": None}, current=1, total_steps=16)
+        self.assertEqual(initial, "")
+
 
 if __name__ == "__main__":
     unittest.main()

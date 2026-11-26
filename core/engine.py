@@ -356,6 +356,19 @@ def load_model(
     return wrapped
 
 
+def _format_tqdm_stats(fmt: dict, current: int, total_steps: int) -> str:
+    """Format elapsed time, remaining ETA, and rate from tqdm's format_dict to match terminal output."""
+    elapsed = float(fmt.get("elapsed") or 0.0)
+    rate = fmt.get("rate")
+    if rate is None and elapsed > 0 and current > 1:
+        rate = (current - 1) / elapsed
+    if not rate or rate <= 0:
+        return ""
+    remaining = max(0.0, (total_steps - current) / rate)
+    rate_str = f"{rate:.2f}step/s" if rate >= 1.0 else f"{1.0 / rate:.2f}s/step"
+    return f"[{tqdm.format_interval(elapsed)}<{tqdm.format_interval(remaining)}, {rate_str}]"
+
+
 def generate_audio(
     model_name: Optional[str] = None,
     prompt: Optional[str] = None,
@@ -456,8 +469,12 @@ def generate_audio(
             # Live terminal progress bar (displayed for both UI and CLI runs)
             if pbar is None:
                 pbar = tqdm(total=total_steps, desc=f"Sampling [{cfg.model_name}]", unit="step", ncols=70, leave=True)
-            pbar.n = current
-            pbar.refresh()
+            delta = max(0, current - pbar.n)
+            if delta:
+                pbar.update(delta)
+            else:
+                pbar.refresh()
+            speed_str = _format_tqdm_stats(pbar.format_dict, current, total_steps)
             if current >= total_steps:
                 pbar.close()
                 pbar = None
@@ -467,19 +484,11 @@ def generate_audio(
             if step_callback:
                 step_callback(current, total_steps)
 
-            # Measure step timing isolated from prior text encoding
+            # Track isolated diffusion loop duration for final summary metrics
             if first_step_time is None:
                 first_step_time = now
-                speed_str = ""
-            else:
-                if diffusion_start is None:
-                    # Estimate step 1 duration from step 2 duration (homogeneous DiT steps)
-                    step_duration = now - first_step_time
-                    diffusion_start = first_step_time - step_duration
-                elapsed = now - diffusion_start
-                speed = current / elapsed if elapsed > 0 else 0.0
-                eta = max(0.0, (total_steps - current) / speed) if speed > 0 else 0.0
-                speed_str = f"{speed:.1f} st/s (ETA: {eta:.0f}s)"
+            elif diffusion_start is None:
+                diffusion_start = first_step_time - (now - first_step_time)
 
             if current >= total_steps:
                 if diffusion_start is not None:
@@ -497,10 +506,15 @@ def generate_audio(
                 status_callback(
                     f"[sampling] Step {current}/{total_steps} ({pct}%) [{bar}]{status_suffix}"
                 )
+            if current >= total_steps:
+                _emit_log("[generate] Sampling complete — decoding audio latents (VAE)...", status_callback)
 
-            # Gradio progress tracking (step tuple + live-measured isolated ETA)
+            # Gradio progress tracking (step tuple + live tqdm telemetry)
             if progress:
-                prog_desc = f"Sampling [{cfg.model_name}] · {speed_str}" if speed_str else f"Sampling [{cfg.model_name}]"
+                if current >= total_steps:
+                    prog_desc = f"Decoding [{cfg.model_name}] (VAE)..."
+                else:
+                    prog_desc = f"Sampling [{cfg.model_name}] {speed_str}" if speed_str else f"Sampling [{cfg.model_name}]"
                 progress((current, total_steps), desc=prog_desc, unit="steps")
 
         audio = None
@@ -556,10 +570,10 @@ def generate_audio(
             print()
             _emit_log(sample_done_msg, status_callback)
 
-            # Stage 3: Decode latents and export WAV
+            # Stage 3: Export decoded audio to WAV
             if progress:
-                progress((total_steps, total_steps), desc="Decoding & saving WAV...", unit="steps")
-            _emit_log("[generate] Decoding audio latents and saving WAV...", status_callback)
+                progress((total_steps, total_steps), desc="Saving WAV...", unit="steps")
+            _emit_log("[generate] Saving WAV...", status_callback)
             decode_start = time.time()
 
             if cfg.output_path:
