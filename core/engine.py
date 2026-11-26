@@ -294,14 +294,14 @@ def load_model(
         _check_cancelled(cancel_event)
         stage1_msg = f"[load] [1/4] Building '{model_name}' architecture & text encoder..."
         if progress:
-            progress(None, desc=stage1_msg)
+            progress((1, 4), desc=stage1_msg, unit="stage")
         _emit_log(stage1_msg, status_callback)
         model = create_diffusion_cond_from_config(model_config)
 
         # Stage 2: Reading safetensors weights from disk
         _check_cancelled(cancel_event)
         if progress:
-            progress(None, desc="[load] [2/4] Reading safetensors weights from disk...")
+            progress((2, 4), desc="[load] [2/4] Reading safetensors weights from disk...", unit="stage")
         t_read = time.time()
         sd = load_file(ckpt_path)
         stage2_done = f"[load] [2/4] Read {len(sd)} weights from disk in {time.time()-t_read:.2f}s."
@@ -310,7 +310,7 @@ def load_model(
         # Stage 3: Mapping state dict
         _check_cancelled(cancel_event)
         if progress:
-            progress(None, desc="[load] [3/4] Mapping weights into model...")
+            progress((3, 4), desc="[load] [3/4] Mapping weights into model...", unit="stage")
         t_copy = time.time()
         copy_state_dict(model, sd)
         stage3_done = f"[load] [3/4] Mapped {len(sd)} weights in {time.time()-t_copy:.2f}s."
@@ -323,7 +323,7 @@ def load_model(
         _check_cancelled(cancel_event)
         stage4_start = f"[load] [4/4] Transferring weights to {device.upper()} ({precision})..."
         if progress:
-            progress(None, desc=stage4_start)
+            progress((4, 4), desc=stage4_start, unit="stage")
         t_xfer = time.time()
         model.eval().requires_grad_(False)
         if half:
@@ -437,7 +437,7 @@ def generate_audio(
 
         # Stage 2: Text encoding + diffusion sampling
         if progress:
-            progress(None, desc="Encoding text prompt with T5 conditioning...")
+            progress((0, None), desc="Encoding text prompt with T5 conditioning...", unit="")
         encode_msg = f"[generate] Encoding prompt and starting diffusion sampling ({total_steps} steps)..."
         _emit_log(encode_msg, status_callback)
 
@@ -498,9 +498,10 @@ def generate_audio(
                     f"[sampling] Step {current}/{total_steps} ({pct}%) [{bar}]{status_suffix}"
                 )
 
-            # Gradio progress tracking (step tuple preserves live iteration metrics & ETA)
+            # Gradio progress tracking (step tuple + live-measured isolated ETA)
             if progress:
-                progress((current, total_steps), desc=f"Sampling [{cfg.model_name}]", unit="steps")
+                prog_desc = f"Sampling [{cfg.model_name}] · {speed_str}" if speed_str else f"Sampling [{cfg.model_name}]"
+                progress((current, total_steps), desc=prog_desc, unit="steps")
 
         audio = None
         try:
@@ -557,7 +558,7 @@ def generate_audio(
 
             # Stage 3: Decode latents and export WAV
             if progress:
-                progress(None, desc="Decoding audio latents and saving WAV...")
+                progress((0, None), desc="Decoding audio latents and saving WAV...", unit="")
             _emit_log("[generate] Decoding audio latents and saving WAV...", status_callback)
             decode_start = time.time()
 

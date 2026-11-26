@@ -772,7 +772,7 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         import threading
         import time
         from unittest.mock import patch
-        from app import _run_job_blocking
+        from app import _LIVE_LOGS, _format_live_logs, _run_job_blocking
 
         progress_calls = []
 
@@ -783,11 +783,11 @@ class TestRobustnessAndCancellation(unittest.TestCase):
             if status_callback:
                 status_callback("[load] [1/4] Building...")
             if progress:
-                progress(None, desc="Building...")
+                progress((1, 4), desc="Building...", unit="stage")
             time.sleep(2.2)
             if progress:
-                progress((1, 2), desc="Sampling", unit="steps")
-                progress((2, 2), desc="Sampling", unit="steps")
+                progress((1, 2), desc="Sampling · 2.0 st/s (ETA: 1s)", unit="steps")
+                progress((2, 2), desc="Sampling · 2.0 st/s (ETA: 0s)", unit="steps")
             return GenerationResult(
                 output_path="outputs/ok.wav",
                 status_message="done",
@@ -798,19 +798,23 @@ class TestRobustnessAndCancellation(unittest.TestCase):
             )
 
         logs = []
+        _LIVE_LOGS.pop("test-tab", None)
         with patch("app.generate_audio", side_effect=fake_generate_audio):
             kind, payload, _ = _run_job_blocking(
                 {"model_name": "small-sfx", "prompt": "waves", "duration": 5.0, "steps": 2},
                 fake_progress,
                 logs,
                 threading.Event(),
+                live_log_key="test-tab",
             )
 
         self.assertEqual(kind, "done")
         self.assertEqual(payload.output_path, "outputs/ok.wav")
-        self.assertTrue(any(val is None and "Building..." in (desc or "") and "s)" in (desc or "") for val, desc, _ in progress_calls))
-        self.assertIn(((1, 2), "Sampling", "steps"), progress_calls)
-        self.assertIn(((2, 2), "Sampling", "steps"), progress_calls)
+        self.assertTrue(any(val == (0, None) and "Building..." in (desc or "") and "s)" in (desc or "") for val, desc, _ in progress_calls))
+        self.assertIn(((1, 2), "Sampling · 2.0 st/s (ETA: 1s)", "steps"), progress_calls)
+        self.assertIn(((2, 2), "Sampling · 2.0 st/s (ETA: 0s)", "steps"), progress_calls)
+        self.assertIn("[load] [1/4] Building...", _format_live_logs("test-tab"))
+        _LIVE_LOGS.pop("test-tab", None)
 
     def test_read_playhead_js_helper(self):
         from app import _read_playhead_js

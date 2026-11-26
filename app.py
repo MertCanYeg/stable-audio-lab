@@ -527,6 +527,26 @@ def _format_slot_error(err: Exception, duration: float, model_name: str, logs: l
 
 
 _UI_CANCEL_EVENT = threading.Event()
+_LIVE_LOGS: dict[str, dict] = {}
+
+
+def _set_live_logs(key: str | None, lines: list[str], sampling: str | None = None) -> None:
+    """Record live status lines for a model tab so gr.Timer can stream them without yielding."""
+    if key is None:
+        return
+    _LIVE_LOGS[key] = {"lines": list(lines), "sampling": sampling}
+
+
+def _format_live_logs(key: str | None) -> str:
+    """Format the latest live log buffer for display in Generation Status & Telemetry."""
+    if key is None or key not in _LIVE_LOGS:
+        return ""
+    entry = _LIVE_LOGS[key]
+    text = "\n".join(entry.get("lines", []))
+    sampling = entry.get("sampling")
+    if sampling:
+        return f"{text}\n{sampling}" if text else sampling
+    return text
 
 
 def _run_job_blocking(
@@ -536,6 +556,7 @@ def _run_job_blocking(
     cancel_event: threading.Event,
     header_lines: list[str] | None = None,
     init_msg: str | None = None,
+    live_log_key: str | None = None,
 ) -> tuple[str, object, str]:
     """Run a single GenerationConfig without intermediate yields so gr.Progress never flickers."""
     q: queue.Queue = queue.Queue()
@@ -544,9 +565,11 @@ def _run_job_blocking(
         if init_msg and logs == [init_msg]:
             logs.clear()
         logs.extend(header_lines)
+        _set_live_logs(live_log_key, logs)
 
     last_desc = "Starting..."
     in_sampling = False
+    active_sampling_bar: str | None = None
 
     def queue_progress(value, desc=None, unit=None):
         q.put(("progress", (value, desc, unit)))
@@ -580,10 +603,15 @@ def _run_job_blocking(
             if not thread.is_alive() and q.empty():
                 break
             now = time.time()
-            if now - last_activity_time >= 2.0 and not in_sampling and progress is not None:
+            if now - last_activity_time >= 2.0 and not in_sampling:
                 last_activity_time = now
                 elapsed_s = int(now - stage_start_time)
-                progress(None, desc=f"{last_desc} ({elapsed_s}s)")
+                if progress is not None:
+                    progress((0, None), desc=f"{last_desc} ({elapsed_s}s)", unit="")
+                if live_log_key is not None and logs:
+                    hb_lines = list(logs)
+                    hb_lines[-1] = f"{hb_lines[-1]} ({elapsed_s}s)"
+                    _set_live_logs(live_log_key, hb_lines, active_sampling_bar)
             continue
 
         last_activity_time = time.time()
@@ -602,11 +630,15 @@ def _run_job_blocking(
         elif event_type == "status":
             if init_msg and logs == [init_msg]:
                 logs.clear()
-            if not payload.startswith("[sampling]"):
+            if payload.startswith("[sampling]"):
+                active_sampling_bar = payload
+            else:
                 logs.append(payload)
+                active_sampling_bar = None
                 stage_start_time = time.time()
                 if not in_sampling:
                     last_desc = payload
+            _set_live_logs(live_log_key, logs, active_sampling_bar)
 
         elif event_type == "done":
             return "done", payload, "\n".join(logs)
@@ -1020,6 +1052,7 @@ def build_model_tab(
         with gr.Column(scale=1):
             jobs_state = gr.State(None)
             logs_state = gr.State([])
+            log_timer = gr.Timer(value=0.5, active=False)
             with gr.Group(visible=True, elem_classes=["single-audio-box"]) as single_box:
                 output_audio = gr.Audio(label="Generated Audio", type="filepath", interactive=False)
             with gr.Group(visible=False, elem_classes=["sweep-box"]) as sweep_box:
@@ -1319,6 +1352,7 @@ def build_model_tab(
         )
         _UI_CANCEL_EVENT.clear()
         init_msg = f"Initializing {model_name}..."
+        _set_live_logs(model_name, [init_msg])
         if plan["mode"] == "Single":
             slot_clears = [gr.update(value=None)] * 5
         else:
@@ -1337,7 +1371,22 @@ def build_model_tab(
             [init_msg],
             gr.update(interactive=False),
             gr.update(interactive=True),
+            gr.Timer(active=True),
         )
+
+    def poll_live_logs(current_status: str):
+        text = _format_live_logs(model_name)
+        if not text or text == current_status:
+            return gr.skip()
+        return text
+
+    log_timer.tick(
+        fn=poll_live_logs,
+        inputs=[status],
+        outputs=[status],
+        queue=False,
+        show_progress="hidden",
+    )
 
     def run_single_slot(
         plan: dict | None,
@@ -1345,7 +1394,7 @@ def build_model_tab(
         progress=gr.Progress(track_tqdm=False),
     ):
         if not plan or plan.get("mode") != "Single":
-            return (gr.skip(),) * 7
+            return (gr.skip(),) * 8
 
         logs = list(current_logs or [])
         cfg_dict = plan["configs"][0]
@@ -1357,16 +1406,20 @@ def build_model_tab(
             logs,
             _UI_CANCEL_EVENT,
             init_msg=init_msg,
+            live_log_key=model_name,
         )
         if kind == "done":
             summary_display = f"{display_text}\n\n✅ {payload.status_message}"
-            return payload.output_path, payload.seed, summary_display, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+            _set_live_logs(model_name, [summary_display])
+            return payload.output_path, payload.seed, summary_display, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
         if kind == "cancelled":
-            return None, gr.skip(), display_text, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+            _set_live_logs(model_name, [display_text])
+            return None, gr.skip(), display_text, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
 
         toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
+        _set_live_logs(model_name, [full_log])
         gr.Warning(toast_msg)
-        return None, gr.skip(), full_log, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+        return None, gr.skip(), full_log, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
 
     def run_multi_slot(
         slot_idx: int,
@@ -1375,7 +1428,7 @@ def build_model_tab(
         progress=gr.Progress(track_tqdm=False),
     ):
         if not plan or plan.get("mode") == "Single" or slot_idx >= len(plan.get("configs", [])):
-            return (gr.skip(),) * 7
+            return (gr.skip(),) * 8
 
         configs = plan["configs"]
         total = len(configs)
@@ -1395,18 +1448,22 @@ def build_model_tab(
             _UI_CANCEL_EVENT,
             header_lines=header_lines,
             init_msg=init_msg,
+            live_log_key=model_name,
         )
         if kind == "done":
             if is_last:
                 summary_display = f"{display_text}\n\n✅ {plan['summary_msg']}"
-                return payload.output_path, plan["last_seed"], summary_display, logs, None, gr.update(interactive=True), gr.update(interactive=False)
-            return payload.output_path, gr.skip(), display_text, logs, gr.skip(), gr.skip(), gr.skip()
+                _set_live_logs(model_name, [summary_display])
+                return payload.output_path, plan["last_seed"], summary_display, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
+            return payload.output_path, gr.skip(), display_text, logs, gr.skip(), gr.skip(), gr.skip(), gr.skip()
         if kind == "cancelled":
-            return None, gr.skip(), display_text, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+            _set_live_logs(model_name, [display_text])
+            return None, gr.skip(), display_text, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
 
         toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
+        _set_live_logs(model_name, [full_log])
         gr.Warning(toast_msg)
-        return None, gr.skip(), full_log, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+        return None, gr.skip(), full_log, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
 
     ev_prep = generate_btn.click(
         fn=prepare_generation,
@@ -1441,6 +1498,7 @@ def build_model_tab(
             logs_state,
             generate_btn,
             stop_btn,
+            log_timer,
         ],
         show_progress="hidden",
     )
@@ -1448,7 +1506,7 @@ def build_model_tab(
     ev_single = ev_prep.success(
         fn=run_single_slot,
         inputs=[jobs_state, logs_state],
-        outputs=[output_audio, last_seed_box, status, logs_state, jobs_state, generate_btn, stop_btn],
+        outputs=[output_audio, last_seed_box, status, logs_state, jobs_state, generate_btn, stop_btn, log_timer],
         show_progress="full",
         show_progress_on=[output_audio],
     )
@@ -1460,7 +1518,7 @@ def build_model_tab(
         ev_slot = chain_prev.success(
             fn=functools.partial(run_multi_slot, idx),
             inputs=[jobs_state, logs_state],
-            outputs=[slot_comp, last_seed_box, status, logs_state, jobs_state, generate_btn, stop_btn],
+            outputs=[slot_comp, last_seed_box, status, logs_state, jobs_state, generate_btn, stop_btn, log_timer],
             show_progress="full",
             show_progress_on=[slot_comp],
         )
@@ -1469,17 +1527,18 @@ def build_model_tab(
 
     def on_stop_click():
         _UI_CANCEL_EVENT.set()
-        return gr.update(interactive=True), gr.update(interactive=False)
+        return gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
 
     stop_btn.click(
         fn=on_stop_click,
         inputs=[],
-        outputs=[generate_btn, stop_btn],
+        outputs=[generate_btn, stop_btn, log_timer],
         cancels=[ev_prep, ev_single, *sweep_events],
         show_progress="hidden",
     )
 
     def reset_all():
+        _LIVE_LOGS.pop(model_name, None)
         return (
             None,
             None,
