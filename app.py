@@ -795,6 +795,102 @@ def _format_slot_error(err: Exception, duration: float, model_name: str, logs: l
     return toast_msg, full_log
 
 
+_UI_CANCEL_EVENT = threading.Event()
+
+
+def _run_job_blocking(
+    config_dict: dict,
+    progress,
+    logs: list[str],
+    cancel_event: threading.Event,
+    header_lines: list[str] | None = None,
+    init_msg: str | None = None,
+) -> tuple[str, object, str]:
+    """Run a single GenerationConfig without intermediate yields so gr.Progress never flickers."""
+    q: queue.Queue = queue.Queue()
+
+    if header_lines:
+        if init_msg and logs == [init_msg]:
+            logs.clear()
+        logs.extend(header_lines)
+
+    last_desc = "Starting..."
+    in_sampling = False
+
+    def queue_progress(value, desc=None, unit=None):
+        q.put(("progress", (value, desc, unit)))
+
+    def worker():
+        try:
+            config = GenerationConfig(**config_dict)
+            config.validate()
+            result = generate_audio(
+                config=config,
+                progress=queue_progress,
+                status_callback=lambda msg: q.put(("status", msg)),
+                cancel_event=cancel_event,
+            )
+            q.put(("done", result))
+        except GenerationCancelledError as e:
+            q.put(("cancelled", str(e)))
+        except Exception as e:
+            q.put(("error", e))
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    last_activity_time = time.time()
+    stage_start_time = time.time()
+
+    while True:
+        try:
+            event_type, payload = q.get(timeout=0.1)
+        except queue.Empty:
+            if not thread.is_alive() and q.empty():
+                break
+            now = time.time()
+            if now - last_activity_time >= 2.0 and not in_sampling and progress is not None:
+                last_activity_time = now
+                elapsed_s = int(now - stage_start_time)
+                progress(None, desc=f"{last_desc} ({elapsed_s}s)")
+            continue
+
+        last_activity_time = time.time()
+
+        if event_type == "progress":
+            val, desc, unit = payload
+            if desc:
+                last_desc = desc
+            in_sampling = unit == "steps"
+            if progress is not None:
+                if unit is not None:
+                    progress(val, desc=desc, unit=unit)
+                else:
+                    progress(val, desc=desc)
+
+        elif event_type == "status":
+            if init_msg and logs == [init_msg]:
+                logs.clear()
+            if not payload.startswith("[sampling]"):
+                logs.append(payload)
+                stage_start_time = time.time()
+                if not in_sampling:
+                    last_desc = payload
+
+        elif event_type == "done":
+            return "done", payload, "\n".join(logs)
+
+        elif event_type == "cancelled":
+            cancel_msg = f"⏹️ {payload or 'Generation cancelled.'}"
+            display_text = f"{chr(10).join(logs)}\n\n{cancel_msg}" if logs else cancel_msg
+            return "cancelled", None, display_text
+
+        elif event_type == "error":
+            return "error", payload, "\n".join(logs)
+
+    return "cancelled", None, "\n".join(logs)
+
+
 def _run_job_stream(
     config_dict: dict,
     progress,
@@ -1471,6 +1567,7 @@ def build_model_tab(
             normalize_audio=norm_val,
             fade_out_seconds=fade_val,
         )
+        _UI_CANCEL_EVENT.clear()
         init_msg = f"Initializing {model_name}..."
         if plan["mode"] == "Single":
             slot_clears = [gr.update(value=None)] * 5
@@ -1498,34 +1595,28 @@ def build_model_tab(
         progress=gr.Progress(track_tqdm=False),
     ):
         if not plan or plan.get("mode") != "Single":
-            yield (gr.skip(),) * 6
-            return
+            return (gr.skip(),) * 7
 
         logs = list(current_logs or [])
         cfg_dict = plan["configs"][0]
-        cancel_event = threading.Event()
         init_msg = f"Initializing {plan['model_name']}..."
 
-        for kind, payload, display_text in _run_job_stream(
+        kind, payload, display_text = _run_job_blocking(
             cfg_dict,
             progress,
             logs,
-            cancel_event,
+            _UI_CANCEL_EVENT,
             init_msg=init_msg,
-        ):
-            if kind == "status":
-                yield gr.skip(), gr.skip(), display_text, logs, gr.skip(), gr.skip()
-            elif kind == "done":
-                summary_display = f"{display_text}\n\n✅ {payload.status_message}"
-                yield payload.output_path, payload.seed, summary_display, logs, gr.update(interactive=True), gr.update(interactive=False)
-                return
-            elif kind == "cancelled":
-                yield None, gr.skip(), display_text, logs, gr.update(interactive=True), gr.update(interactive=False)
-                return
-            elif kind == "error":
-                toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
-                yield None, gr.skip(), full_log, logs, gr.update(interactive=True), gr.update(interactive=False)
-                raise gr.Error(toast_msg) from payload
+        )
+        if kind == "done":
+            summary_display = f"{display_text}\n\n✅ {payload.status_message}"
+            return payload.output_path, payload.seed, summary_display, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+        if kind == "cancelled":
+            return None, gr.skip(), display_text, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+
+        toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
+        gr.Warning(toast_msg)
+        return None, gr.skip(), full_log, logs, None, gr.update(interactive=True), gr.update(interactive=False)
 
     def run_multi_slot(
         slot_idx: int,
@@ -1534,8 +1625,7 @@ def build_model_tab(
         progress=gr.Progress(track_tqdm=False),
     ):
         if not plan or plan.get("mode") == "Single" or slot_idx >= len(plan.get("configs", [])):
-            yield (gr.skip(),) * 6
-            return
+            return (gr.skip(),) * 7
 
         configs = plan["configs"]
         total = len(configs)
@@ -1546,33 +1636,27 @@ def build_model_tab(
         if slot_idx == 0:
             header_lines.append(plan["header"])
         header_lines.append(plan["var_headers"][slot_idx])
-        cancel_event = threading.Event()
         init_msg = f"Initializing {plan['model_name']}..."
 
-        for kind, payload, display_text in _run_job_stream(
+        kind, payload, display_text = _run_job_blocking(
             cfg_dict,
             progress,
             logs,
-            cancel_event,
+            _UI_CANCEL_EVENT,
             header_lines=header_lines,
             init_msg=init_msg,
-        ):
-            if kind == "status":
-                yield gr.skip(), gr.skip(), display_text, logs, gr.skip(), gr.skip()
-            elif kind == "done":
-                if is_last:
-                    summary_display = f"{display_text}\n\n✅ {plan['summary_msg']}"
-                    yield payload.output_path, plan["last_seed"], summary_display, logs, gr.update(interactive=True), gr.update(interactive=False)
-                else:
-                    yield payload.output_path, gr.skip(), display_text, logs, gr.skip(), gr.skip()
-                return
-            elif kind == "cancelled":
-                yield None, gr.skip(), display_text, logs, gr.update(interactive=True), gr.update(interactive=False)
-                return
-            elif kind == "error":
-                toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
-                yield None, gr.skip(), full_log, logs, gr.update(interactive=True), gr.update(interactive=False)
-                raise gr.Error(toast_msg) from payload
+        )
+        if kind == "done":
+            if is_last:
+                summary_display = f"{display_text}\n\n✅ {plan['summary_msg']}"
+                return payload.output_path, plan["last_seed"], summary_display, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+            return payload.output_path, gr.skip(), display_text, logs, gr.skip(), gr.skip(), gr.skip()
+        if kind == "cancelled":
+            return None, gr.skip(), display_text, logs, None, gr.update(interactive=True), gr.update(interactive=False)
+
+        toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
+        gr.Warning(toast_msg)
+        return None, gr.skip(), full_log, logs, None, gr.update(interactive=True), gr.update(interactive=False)
 
     ev_prep = generate_btn.click(
         fn=prepare_generation,
@@ -1614,7 +1698,7 @@ def build_model_tab(
     ev_single = ev_prep.success(
         fn=run_single_slot,
         inputs=[jobs_state, logs_state],
-        outputs=[output_audio, last_seed_box, status, logs_state, generate_btn, stop_btn],
+        outputs=[output_audio, last_seed_box, status, logs_state, jobs_state, generate_btn, stop_btn],
         show_progress="full",
         show_progress_on=[output_audio],
     )
@@ -1626,15 +1710,19 @@ def build_model_tab(
         ev_slot = chain_prev.success(
             fn=functools.partial(run_multi_slot, idx),
             inputs=[jobs_state, logs_state],
-            outputs=[slot_comp, last_seed_box, status, logs_state, generate_btn, stop_btn],
+            outputs=[slot_comp, last_seed_box, status, logs_state, jobs_state, generate_btn, stop_btn],
             show_progress="full",
             show_progress_on=[slot_comp],
         )
         sweep_events.append(ev_slot)
         chain_prev = ev_slot
 
+    def on_stop_click():
+        _UI_CANCEL_EVENT.set()
+        return gr.update(interactive=True), gr.update(interactive=False)
+
     stop_btn.click(
-        fn=lambda: (gr.update(interactive=True), gr.update(interactive=False)),
+        fn=on_stop_click,
         inputs=[],
         outputs=[generate_btn, stop_btn],
         cancels=[ev_prep, ev_single, *sweep_events],

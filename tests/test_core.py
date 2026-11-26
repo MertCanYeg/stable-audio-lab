@@ -751,6 +751,7 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         self.assertIn("Metadata off", summary)
 
     def test_app_per_slot_progress_targets(self):
+        import inspect
         import gradio as gr
         from app import create_app
 
@@ -765,6 +766,52 @@ class TestRobustnessAndCancellation(unittest.TestCase):
             targets = dep.show_progress_on
             self.assertEqual(len(targets), 1)
             self.assertIsInstance(targets[0], gr.Audio)
+            # Direct return functions (non-generators) prevent intermediate yields from resetting gr.Progress
+            self.assertFalse(inspect.isgeneratorfunction(dep.fn))
+
+    def test_run_job_blocking_routes_progress_and_heartbeat(self):
+        import threading
+        import time
+        from unittest.mock import patch
+        from app import _run_job_blocking
+
+        progress_calls = []
+
+        def fake_progress(val, desc=None, unit=None):
+            progress_calls.append((val, desc, unit))
+
+        def fake_generate_audio(config, progress=None, status_callback=None, cancel_event=None):
+            if status_callback:
+                status_callback("[load] [1/4] Building...")
+            if progress:
+                progress(None, desc="Building...")
+            time.sleep(2.2)
+            if progress:
+                progress((1, 2), desc="Sampling", unit="steps")
+                progress((2, 2), desc="Sampling", unit="steps")
+            return GenerationResult(
+                output_path="outputs/ok.wav",
+                status_message="done",
+                duration=5.0,
+                elapsed=2.2,
+                speed=4.0,
+                seed=42,
+            )
+
+        logs = []
+        with patch("app.generate_audio", side_effect=fake_generate_audio):
+            kind, payload, _ = _run_job_blocking(
+                {"model_name": "small-sfx", "prompt": "waves", "duration": 5.0, "steps": 2},
+                fake_progress,
+                logs,
+                threading.Event(),
+            )
+
+        self.assertEqual(kind, "done")
+        self.assertEqual(payload.output_path, "outputs/ok.wav")
+        self.assertTrue(any(val is None and "Building..." in (desc or "") and "s)" in (desc or "") for val, desc, _ in progress_calls))
+        self.assertIn(((1, 2), "Sampling", "steps"), progress_calls)
+        self.assertIn(((2, 2), "Sampling", "steps"), progress_calls)
 
     def test_extract_waveform_peaks_and_picker_html(self):
         import os
