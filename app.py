@@ -10,6 +10,7 @@ import threading
 import time
 from dotenv import load_dotenv
 import gradio as gr
+import soundfile as sf
 import torch
 
 load_dotenv()
@@ -79,13 +80,13 @@ CUSTOM_CSS = """
     margin-bottom: 8px !important;
     font-size: 0.88em !important;
     min-height: 38px !important;
-    height: 38px !important;
-    max-height: 38px !important;
+    height: auto !important;
+    max-height: none !important;
     display: flex !important;
     align-items: center !important;
     box-sizing: border-box !important;
-    padding: 0 14px !important;
-    overflow: hidden !important;
+    padding: 6px 14px !important;
+    overflow: visible !important;
 }
 .model-info-banner .prose,
 .model-info-banner [data-testid="markdown-wrapper"],
@@ -182,69 +183,19 @@ CUSTOM_CSS = """
     max-height: unset !important;
 }
 
-/* CFG Group - Unified card with seamless styling, balanced padding, and invariant height */
-.cfg-group {
-    border: 1px solid var(--block-border-color) !important;
+/* Variation card - mode selector on top, guidance + seed controls below (native Gradio sizing, no clipping) */
+.variation-card {
     border-radius: var(--block-radius) !important;
-    background: var(--block-background-fill) !important;
-    padding: 0 !important;
-    box-sizing: border-box !important;
-    height: 114px !important;
-    min-height: 114px !important;
-    max-height: 114px !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: space-between !important;
-    overflow: hidden !important;
 }
-.cfg-group .cfg-group,
-.cfg-group .styler,
-.cfg-group .form {
-    border: none !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    box-sizing: border-box !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    gap: 0 !important;
-    row-gap: 0 !important;
-    column-gap: 0 !important;
-    height: 112px !important;
-    min-height: 112px !important;
-    max-height: 112px !important;
-    display: flex !important;
-    flex-direction: column !important;
+.seed-actions {
+    gap: 6px !important;
     flex-wrap: nowrap !important;
-    justify-content: space-between !important;
-    overflow: hidden !important;
-    overflow-x: hidden !important;
-    overflow-y: hidden !important;
 }
-.cfg-group .block:not(.variation-mode-radio),
-.cfg-group .gradio-slider,
-.cfg-group .gradio-textbox {
-    border: none !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    padding: 8px 10px 6px 10px !important;
-    height: 76px !important;
-    min-height: 76px !important;
-    max-height: 76px !important;
-    box-sizing: border-box !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    overflow: hidden !important;
-    width: 100% !important;
-}
-.cfg-group textarea {
-    height: 36px !important;
-    min-height: 36px !important;
-    max-height: 36px !important;
-    resize: none !important;
+.seed-actions button {
+    min-height: 32px !important;
     font-size: 0.85rem !important;
-    padding: 6px 10px !important;
-    box-sizing: border-box !important;
+    padding: 4px 8px !important;
+    white-space: nowrap !important;
 }
 .input-error textarea {
     border: 1px solid #f85149 !important;
@@ -254,109 +205,10 @@ CUSTOM_CSS = """
 .input-error span[data-testid="block-info"] {
     color: #f85149 !important;
 }
-.variation-mode-radio,
-.cfg-group .variation-mode-radio,
-.cfg-group .variation-mode-radio.block {
-    border: none !important;
-    border-top: 1px solid var(--block-border-color) !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    padding: 4px 10px !important;
-    margin: 0 !important;
-    height: 36px !important;
-    min-height: 36px !important;
-    max-height: 36px !important;
-    box-sizing: border-box !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: flex-start !important;
-    width: 100% !important;
-    overflow: hidden !important;
-}
-.variation-mode-radio .wrap {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    gap: 8px !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-.variation-mode-radio label {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 4px !important;
-    white-space: nowrap !important;
-    font-size: 0.78rem !important;
-    padding: 2px 4px !important;
-    margin: 0 !important;
-    border: none !important;
-    background: transparent !important;
-    box-shadow: none !important;
-}
 .option-accordion {
     border-radius: var(--block-radius) !important;
     margin-top: 2px !important;
     margin-bottom: 2px !important;
-}
-
-/* Seed Column and Box - Invariant matching height */
-.seed-col {
-    display: flex !important;
-    flex-direction: column !important;
-}
-.seed-col > .form {
-    border: 1px solid var(--block-border-color) !important;
-    border-radius: var(--block-radius) !important;
-    background: var(--block-background-fill) !important;
-    height: 114px !important;
-    min-height: 114px !important;
-    max-height: 114px !important;
-    box-sizing: border-box !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    padding: 0 !important;
-}
-.seed-box {
-    border: none !important;
-    background: transparent !important;
-    height: 100% !important;
-    box-sizing: border-box !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    padding: 10px 10px !important;
-    overflow: hidden !important;
-}
-.seed-box > label {
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    gap: 0 !important;
-    height: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-.seed-box span.has-info {
-    margin: 0 0 2px 0 !important;
-    line-height: 1.2 !important;
-    font-size: 0.85rem !important;
-}
-.seed-box .info-text {
-    font-size: 0.75rem !important;
-    line-height: 1.2 !important;
-    margin: 0 0 4px 0 !important;
-}
-.seed-box input {
-    height: 36px !important;
-    min-height: 36px !important;
-    max-height: 36px !important;
-    padding: 6px 10px !important;
-    box-sizing: border-box !important;
-    font-size: 0.85rem !important;
 }
 .form:has(> .metadata-toggle),
 .form:has(.metadata-toggle) {
@@ -373,10 +225,36 @@ CUSTOM_CSS = """
     box-shadow: none !important;
     padding: 2px 4px !important;
     margin: 0 !important;
+    display: flex !important;
+    justify-content: flex-start !important;
+    width: 100% !important;
+    margin-right: auto !important;
+}
+.metadata-toggle > *,
+.metadata-toggle label,
+.metadata-toggle .checkbox-container {
+    justify-content: flex-start !important;
+    margin-right: auto !important;
+}
+.progress-host,
+.progress-host.block {
+    min-height: 44px !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: var(--block-radius) !important;
+    background: var(--block-background-fill) !important;
+    padding: 8px 14px !important;
+    margin-bottom: 4px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+.progress-host p {
+    margin: 0 !important;
+    font-size: 0.88rem !important;
 }
 .action-btn-row {
     display: flex !important;
     align-items: stretch !important;
+    gap: 8px !important;
 }
 .action-btn-row button {
     height: auto !important;
@@ -409,6 +287,17 @@ CUSTOM_CSS = """
 .history-table {
     max-height: 360px !important;
     overflow-y: auto !important;
+    overflow-x: hidden !important;
+}
+.history-table table {
+    width: 100% !important;
+}
+.history-table td {
+    word-break: break-word !important;
+    white-space: normal !important;
+}
+.history-table th {
+    white-space: nowrap !important;
 }
 """
 
@@ -432,6 +321,45 @@ TAB_CONFIG = [
         "Optional: Suppress acoustic flaws, distortion, or unwanted elements.",
     ),
 ]
+
+
+VARIATION_MODES = ["Single", "CFG Sweep", "Seed Batch"]
+VARIATION_MODE_INFO = {
+    "Single": "One output using the CFG and Seed below.",
+    "CFG Sweep": "2-5 outputs sharing one seed, each with a different CFG value.",
+    "Seed Batch": "2-5 outputs sharing one CFG, each with a different seed.",
+}
+SEED_INFO = {
+    "Single": "-1 = random seed",
+    "CFG Sweep": "Shared by all CFG variations (-1 = random)",
+    "Seed Batch": "Base seed, +1 per variation (-1 = random seeds)",
+}
+AUDIO_ACCORDION_LABEL = "🎛️ Audio Input (Remix / Inpainting)"
+POSTPROC_ACCORDION_LABEL = "🎚️ Output & Post-Processing"
+DELETE_BUTTON_LABEL = "🗑️ Delete Selected"
+CONFIRM_DELETE_LABEL = "⚠️ Confirm Delete"
+HISTORY_PLACEHOLDER = "Select a WAV row below to inspect its settings."
+
+
+def audio_accordion_label(mode: str) -> str:
+    """Accordion title that stays informative while collapsed (shows active conditioning mode)."""
+    if mode == "Audio-to-Audio (Remix)":
+        return f"{AUDIO_ACCORDION_LABEL} · Remix active"
+    if mode == "Inpainting":
+        return f"{AUDIO_ACCORDION_LABEL} · Inpainting active"
+    return AUDIO_ACCORDION_LABEL
+
+
+def postproc_accordion_label(embed_metadata: bool, normalize: bool, fade_out_seconds: float) -> str:
+    """Accordion title summarizing non-default output options while collapsed."""
+    parts = []
+    if normalize:
+        parts.append("Normalize")
+    if fade_out_seconds and float(fade_out_seconds) > 0:
+        parts.append(f"Fade {float(fade_out_seconds):g}s")
+    if not embed_metadata:
+        parts.append("Metadata off")
+    return f"{POSTPROC_ACCORDION_LABEL} · {' · '.join(parts)}" if parts else POSTPROC_ACCORDION_LABEL
 
 
 def generate(
@@ -494,6 +422,8 @@ def generate(
             raise gr.Error("❌ Please upload or select a Source Audio file for Inpainting mode.")
         if inpaint_start is None or inpaint_end is None or float(inpaint_start) < 0 or float(inpaint_end) <= float(inpaint_start):
             raise gr.Error("❌ Inpainting requires valid start/end times with End > Start >= 0.")
+        if float(inpaint_start) >= float(duration):
+            raise gr.Error(f"❌ Inpaint Start ({float(inpaint_start):g}s) must be earlier than Duration ({float(duration):g}s).")
         inpaint_path = source_audio
 
     is_multi = mode in ("CFG Sweep", "Seed Batch")
@@ -504,24 +434,36 @@ def generate(
     logs.append(init_msg)
 
     # 2. Validation passed -> immediately clear outputs to signify start of a fresh generation
-    yield None, gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), init_msg
+    yield None, gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(), init_msg
 
     sweep_files: list[str | None] = [None, None, None, None, None]
+    active_var_idx: int = 0 if is_multi else -1
+    progress_prefix: list[str] = [""]
 
-    def _sweep_updates(files: list[str | None], labels_list: list[str], multi_active: bool):
+    def _sweep_updates(files: list[str | None], labels_list: list[str], multi_active: bool, active_idx: int):
         if not multi_active:
             return [gr.update(value=None)] * 5
         updates = []
         for i in range(5):
             if i < len(labels_list):
                 f_path = files[i] if i < len(files) else None
-                updates.append(gr.update(value=f_path, visible=True, label=labels_list[i]))
+                base_label = labels_list[i]
+                if f_path is not None:
+                    slot_label = f"✅ {base_label}"
+                elif i == active_idx:
+                    slot_label = f"⏳ {base_label} (Generating...)"
+                elif active_idx >= 0 and i > active_idx:
+                    slot_label = f"🕒 {base_label} (Queued)"
+                else:
+                    slot_label = base_label
+                updates.append(gr.update(value=f_path, visible=True, label=slot_label))
             else:
                 updates.append(gr.update(value=None, visible=False))
         return updates
 
     def queue_progress(value, desc=None, unit=None):
-        q.put(("progress", (value, desc, unit)))
+        full_desc = f"{progress_prefix[0]}{desc}" if (is_multi and desc and progress_prefix[0]) else desc
+        q.put(("progress", (value, full_desc, unit)))
 
     cancel_event = threading.Event()
 
@@ -562,6 +504,8 @@ def generate(
                 for idx, c_val in enumerate(cfgs):
                     if cancel_event.is_set():
                         raise GenerationCancelledError("Generation cancelled.")
+                    progress_prefix[0] = f"[{idx + 1}/{len(cfgs)} · CFG {c_val}] "
+                    q.put(("var_start", idx))
                     q.put(("status", f"\n[variation {idx + 1}/{len(cfgs)}] CFG: {c_val} (Seed: {shared_seed})"))
                     var_cfg = _make_config(c_val, shared_seed)
                     var_cfg.validate()
@@ -572,12 +516,14 @@ def generate(
                         cancel_event=cancel_event,
                     )
                     q.put(("done_variation", (idx, res)))
-                q.put(("done_sweep", f"Completed CFG Sweep: {len(cfgs)} variations generated with Seed {shared_seed}."))
+                q.put(("done_sweep", (f"Completed CFG Sweep: {len(cfgs)} variations generated with Seed {shared_seed}.", shared_seed)))
             else:
                 q.put(("status", f"[batch] Starting Seed Batch ({len(seeds_list)} variations) | CFG: {cfg}"))
                 for idx, s_val in enumerate(seeds_list):
                     if cancel_event.is_set():
                         raise GenerationCancelledError("Generation cancelled.")
+                    progress_prefix[0] = f"[{idx + 1}/{len(seeds_list)} · Seed {s_val}] "
+                    q.put(("var_start", idx))
                     q.put(("status", f"\n[variation {idx + 1}/{len(seeds_list)}] Seed: {s_val} (CFG: {cfg})"))
                     var_cfg = _make_config(cfg, s_val)
                     var_cfg.validate()
@@ -588,7 +534,8 @@ def generate(
                         cancel_event=cancel_event,
                     )
                     q.put(("done_variation", (idx, res)))
-                q.put(("done_sweep", f"Completed Seed Batch: {len(seeds_list)} variations generated."))
+                seeds_str = ", ".join(str(s) for s in seeds_list)
+                q.put(("done_sweep", (f"Completed Seed Batch: {len(seeds_list)} variations generated with Seeds {seeds_str}.", seeds_list[0])))
         except GenerationCancelledError as e:
             q.put(("cancelled", str(e)))
         except Exception as e:
@@ -614,7 +561,7 @@ def generate(
                     elapsed_s = int(now - stage_start_time)
                     heartbeat_logs = list(logs)
                     heartbeat_logs[-1] = f"{heartbeat_logs[-1]} ({elapsed_s}s)"
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), "\n".join(heartbeat_logs)
+                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), "\n".join(heartbeat_logs)
                 continue
 
             last_activity_time = time.time()
@@ -626,6 +573,13 @@ def generate(
                         progress(val, desc=desc, unit=unit)
                     else:
                         progress(val, desc=desc)
+
+            elif event_type == "var_start":
+                active_var_idx = payload
+                display_text = "\n".join(logs)
+                if active_sampling_bar:
+                    display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
+                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
 
             elif event_type == "status":
                 if logs == [init_msg]:
@@ -641,11 +595,11 @@ def generate(
                 display_text = "\n".join(logs)
                 if active_sampling_bar:
                     display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), display_text
+                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
 
             elif event_type == "done_single":
                 summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
-                yield payload.output_path, *([gr.update(value=None)] * 5), summary_display
+                yield payload.output_path, *([gr.update(value=None)] * 5), payload.seed, summary_display
                 break
 
             elif event_type == "done_variation":
@@ -653,24 +607,28 @@ def generate(
                 if idx < len(sweep_files):
                     sweep_files[idx] = res.output_path
                 display_text = "\n".join(logs)
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), display_text
+                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
 
             elif event_type == "done_sweep":
-                summary_display = f"{chr(10).join(logs)}\n\n✅ {payload}"
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), summary_display
+                summary_msg, last_seed = payload
+                active_var_idx = -1
+                summary_display = f"{chr(10).join(logs)}\n\n✅ {summary_msg}"
+                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), last_seed, summary_display
                 break
 
             elif event_type == "cancelled":
+                active_var_idx = -1
                 cancel_msg = f"⏹️ {payload or 'Generation cancelled.'}"
                 display_text = f"{chr(10).join(logs)}\n\n{cancel_msg}" if logs else cancel_msg
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), display_text
+                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
                 break
 
             elif event_type == "error":
+                active_var_idx = -1
                 err = payload
                 if isinstance(err, StableAudioError):
                     err_msg = f"❌ Error: {err}"
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
+                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
                     raise gr.Error(str(err)) from err
                 elif isinstance(err, torch.cuda.OutOfMemoryError):
                     unload_model()
@@ -678,7 +636,7 @@ def generate(
                         f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
                         f"Model cache cleared; try reducing duration or switching to a smaller model."
                     )
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
+                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
                     raise gr.Error(oom_msg) from err
                 elif isinstance(err, MemoryError):
                     unload_model()
@@ -686,11 +644,11 @@ def generate(
                         f"❌ System RAM exhausted loading or running '{model_name}'. "
                         f"Close other memory-heavy apps or switch to a smaller model."
                     )
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), f"{chr(10).join(logs)}\n\n{ram_msg}" if logs else ram_msg
+                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{ram_msg}" if logs else ram_msg
                     raise gr.Error(ram_msg) from err
                 else:
                     err_msg = f"❌ Generation failed: {err}"
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi)), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
+                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
                     raise gr.Error(err_msg) from err
     finally:
         cancel_event.set()
@@ -747,9 +705,15 @@ def build_model_tab(
                     label="Sampling Steps",
                     scale=1,
                 )
-            with gr.Row(equal_height=True):
-                with gr.Column(scale=2, min_width=200):
-                    with gr.Group(elem_classes=["cfg-group"]):
+            with gr.Group(elem_classes=["variation-card"]):
+                variation_mode = gr.Radio(
+                    choices=VARIATION_MODES,
+                    value="Single",
+                    label="Variation Mode",
+                    info=VARIATION_MODE_INFO["Single"],
+                )
+                with gr.Row(equal_height=True):
+                    with gr.Column(scale=3, min_width=200):
                         cfg = gr.Slider(
                             minimum=1.0,
                             maximum=15.0,
@@ -773,22 +737,18 @@ def build_model_tab(
                             label="Seed Variations",
                             visible=False,
                         )
-                        variation_mode = gr.Radio(
-                            choices=["Single", "CFG Sweep", "Seed Batch"],
-                            value="Single",
-                            show_label=False,
-                            container=False,
-                            elem_classes=["variation-mode-radio"],
+                    with gr.Column(scale=2, min_width=150):
+                        seed = gr.Number(
+                            value=-1,
+                            precision=0,
+                            label="Seed",
+                            info=SEED_INFO["Single"],
                         )
-                with gr.Column(scale=1, min_width=110, elem_classes=["seed-col"]):
-                    seed = gr.Number(
-                        value=-1,
-                        precision=0,
-                        label="Seed",
-                        info="Set to -1 for random seed",
-                        elem_classes=["seed-box"],
-                    )
-            with gr.Accordion("🎛️ Audio Input (Remix / Inpainting)", open=False, elem_classes=["option-accordion"]) as audio_accordion:
+                        with gr.Row(elem_classes=["seed-actions"]):
+                            random_seed_btn = gr.Button("🎲 Random", size="sm", min_width=60)
+                            reuse_seed_btn = gr.Button("♻️ Reuse Last", size="sm", min_width=60, interactive=False)
+            last_seed_box = gr.Number(value=None, precision=0, visible=False)
+            with gr.Accordion(AUDIO_ACCORDION_LABEL, open=False, elem_classes=["option-accordion"]) as audio_accordion:
                 audio_mode = gr.Radio(
                     choices=["Off", "Audio-to-Audio (Remix)", "Inpainting"],
                     value="Off",
@@ -811,7 +771,7 @@ def build_model_tab(
                 with gr.Row(visible=False) as inpaint_row:
                     inpaint_start = gr.Number(value=0.0, minimum=0.0, label="Inpaint Start (s)")
                     inpaint_end = gr.Number(value=5.0, minimum=0.1, label="Inpaint End (s)")
-            with gr.Accordion("🎚️ Output & Post-Processing", open=False, elem_classes=["option-accordion"]):
+            with gr.Accordion(POSTPROC_ACCORDION_LABEL, open=False, elem_classes=["option-accordion"]) as postproc_accordion:
                 embed_metadata_toggle = gr.Checkbox(
                     label="🏷️ Embed generation metadata in WAV",
                     value=True,
@@ -835,22 +795,29 @@ def build_model_tab(
                     f"✨ Generate with {model_name}",
                     variant="primary",
                     size="lg",
-                    scale=4,
+                    scale=3,
+                    min_width=130,
                 )
                 stop_btn = gr.Button(
                     "⏹️ Stop",
                     variant="stop",
                     size="lg",
                     scale=1,
+                    min_width=76,
                 )
                 clear_btn = gr.Button(
-                    "🗑️ Clear Output",
+                    "🗑️ Clear",
                     variant="secondary",
                     size="lg",
                     scale=1,
+                    min_width=82,
                 )
 
         with gr.Column(scale=1):
+            progress_host = gr.Markdown(
+                "Status: **Idle** — ready to generate.",
+                elem_classes=["progress-host"],
+            )
             with gr.Group(visible=True, elem_classes=["single-audio-box"]) as single_box:
                 output_audio = gr.Audio(label="Generated Audio", type="filepath", interactive=False)
             with gr.Group(visible=False, elem_classes=["sweep-box"]) as sweep_box:
@@ -869,54 +836,42 @@ def build_model_tab(
             )
 
     def on_variation_mode_change(mode: str, cfg_text: str, batch_count: int):
-        if mode == "CFG Sweep":
-            valid, cfgs, _ = validate_cfg_sweep(cfg_text)
-            if not valid or not cfgs:
-                cfgs = parse_cfg_sweep(cfg_text)
-            audio_updates = [
-                gr.update(visible=(i < len(cfgs)), label=f"CFG {cfgs[i]}")
-                if i < len(cfgs)
-                else gr.update(visible=False)
-                for i in range(5)
-            ]
-            return (
-                gr.update(visible=False),
-                gr.update(visible=True, label="CFG Values (comma-separated)", elem_classes=["cfg-sweep-input"]),
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=True),
-                *audio_updates,
-            )
-        if mode == "Seed Batch":
-            count = max(2, min(5, int(batch_count)))
-            audio_updates = [
-                gr.update(visible=(i < count), label=f"Variation {i + 1}")
-                for i in range(5)
-            ]
-            return (
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=True),
-                gr.update(visible=False),
-                gr.update(visible=True),
-                *audio_updates,
-            )
+        mode = mode if mode in VARIATION_MODE_INFO else "Single"
+        is_sweep = mode == "CFG Sweep"
+        is_batch = mode == "Seed Batch"
+        if is_sweep:
+            valid, sweep_vals, _ = validate_cfg_sweep(cfg_text)
+            if not valid or not sweep_vals:
+                sweep_vals = parse_cfg_sweep(cfg_text)
+            labels = [f"CFG {c}" for c in sweep_vals]
+        elif is_batch:
+            labels = [f"Variation {i + 1}" for i in range(max(2, min(5, int(batch_count))))]
+        else:
+            labels = []
+        audio_updates = [
+            gr.update(visible=True, label=labels[i]) if i < len(labels) else gr.update(visible=False)
+            for i in range(5)
+        ]
         return (
-            gr.update(visible=True),
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(visible=True),
-            gr.update(visible=False),
-            *([gr.update()] * 5),
+            gr.update(info=VARIATION_MODE_INFO[mode]),
+            gr.update(visible=not is_sweep),  # CFG slider stays visible in Single and Seed Batch
+            gr.update(visible=is_sweep),
+            gr.update(visible=is_batch),
+            gr.update(info=SEED_INFO[mode]),
+            gr.update(visible=not (is_sweep or is_batch)),
+            gr.update(visible=is_sweep or is_batch),
+            *audio_updates,
         )
 
     variation_mode.change(
         fn=on_variation_mode_change,
         inputs=[variation_mode, cfg_sweep_input, seed_batch_count],
         outputs=[
+            variation_mode,
             cfg,
             cfg_sweep_input,
             seed_batch_count,
+            seed,
             single_box,
             sweep_box,
             sweep_audio_1,
@@ -925,6 +880,18 @@ def build_model_tab(
             sweep_audio_4,
             sweep_audio_5,
         ],
+    )
+
+    random_seed_btn.click(fn=lambda: -1, inputs=[], outputs=[seed])
+    reuse_seed_btn.click(
+        fn=lambda last: gr.update() if last is None else int(last),
+        inputs=[last_seed_box],
+        outputs=[seed],
+    )
+    last_seed_box.change(
+        fn=lambda last: gr.update(interactive=last is not None),
+        inputs=[last_seed_box],
+        outputs=[reuse_seed_btn],
     )
 
     def on_seed_batch_count_change(mode: str, batch_count: int):
@@ -949,17 +916,53 @@ def build_model_tab(
     )
 
     def on_audio_mode_change(mode: str):
-        if mode == "Audio-to-Audio (Remix)":
-            return gr.update(visible=True), gr.update(visible=True), gr.update(visible=False)
-        if mode == "Inpainting":
-            return gr.update(visible=True), gr.update(visible=False), gr.update(visible=True)
-        return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+        is_remix = mode == "Audio-to-Audio (Remix)"
+        is_inpaint = mode == "Inpainting"
+        return (
+            gr.update(visible=is_remix or is_inpaint),
+            gr.update(visible=is_remix),
+            gr.update(visible=is_inpaint),
+            gr.update(label=audio_accordion_label(mode)),
+        )
 
     audio_mode.change(
         fn=on_audio_mode_change,
         inputs=[audio_mode],
-        outputs=[source_audio, init_noise_level, inpaint_row],
+        outputs=[source_audio, init_noise_level, inpaint_row, audio_accordion],
     )
+
+    def on_source_audio_change(path: str | None, current_end: float | None):
+        """Match Duration to the measured source length so remix/inpaint covers the whole clip."""
+        if not path:
+            return gr.update(), gr.update()
+        try:
+            src_seconds = float(sf.info(path).duration)
+        except Exception:
+            gr.Warning("Could not read this audio file. Please use WAV, FLAC, OGG, or MP3.")
+            return gr.update(), gr.update()
+        dur_val = int(max(1, min(spec.max_duration, round(src_seconds))))
+        end_val = min(float(current_end), float(dur_val)) if current_end else float(dur_val)
+        if src_seconds > spec.max_duration:
+            gr.Info(f"Source is {src_seconds:.1f}s; Duration clamped to the model maximum of {spec.max_duration:.0f}s.")
+        else:
+            gr.Info(f"Duration set to {dur_val}s to match the source audio ({src_seconds:.1f}s).")
+        return dur_val, end_val
+
+    source_audio.change(
+        fn=on_source_audio_change,
+        inputs=[source_audio, inpaint_end],
+        outputs=[duration, inpaint_end],
+    )
+
+    def on_postproc_change(embed: bool, normalize: bool, fade: float):
+        return gr.update(label=postproc_accordion_label(embed, normalize, fade))
+
+    for postproc_input in (embed_metadata_toggle, normalize_audio_toggle, fade_out_slider):
+        postproc_input.change(
+            fn=on_postproc_change,
+            inputs=[embed_metadata_toggle, normalize_audio_toggle, fade_out_slider],
+            outputs=[postproc_accordion],
+        )
 
     def on_cfg_change(cfg_text: str):
         is_valid, vals, _ = validate_cfg_sweep(cfg_text)
@@ -1069,8 +1072,11 @@ def build_model_tab(
             sweep_audio_3,
             sweep_audio_4,
             sweep_audio_5,
+            last_seed_box,
             status,
         ],
+        show_progress="full",
+        show_progress_on=[progress_host],
     )
 
     stop_btn.click(fn=None, cancels=[gen_event])
@@ -1106,11 +1112,11 @@ def build_model_tab(
     )
 
     if spec.examples:
-        gr.Markdown("#### Prompt Templates *(click any row to load)*")
         gr.Examples(
             examples=spec.examples,
             inputs=[prompt, duration],
             examples_per_page=100,
+            label="📋 Prompt Templates (click any row to load)",
         )
 
     return {
@@ -1123,6 +1129,7 @@ def build_model_tab(
         "seed": seed,
         "normalize_audio": normalize_audio_toggle,
         "fade_out": fade_out_slider,
+        "postproc_accordion": postproc_accordion,
         "audio_accordion": audio_accordion,
         "audio_mode": audio_mode,
         "source_audio": source_audio,
@@ -1136,8 +1143,8 @@ def _format_history_rows(records: list[dict]) -> list[list[str]]:
     rows = []
     for rec in records:
         prompt_text = rec.get("prompt") or "(no embedded metadata)"
-        if len(prompt_text) > 70:
-            prompt_text = prompt_text[:67] + "..."
+        if len(prompt_text) > 55:
+            prompt_text = prompt_text[:52] + "..."
         dur = f"{rec['duration']:.0f}s" if rec.get("duration") is not None else "-"
         cfg_val = f"{rec['cfg_scale']}" if rec.get("cfg_scale") is not None else "-"
         seed_val = f"{rec['seed']}" if rec.get("seed") is not None else "-"
@@ -1216,6 +1223,7 @@ def create_app():
             with gr.Tab("History", id="history") as history_tab:
                 history_state = gr.State([])
                 selected_wav_state = gr.State(None)
+                delete_armed_state = gr.State(False)
 
                 with gr.Row(elem_classes=["action-btn-row"]):
                     refresh_history_btn = gr.Button("🔄 Refresh History", variant="secondary", scale=1)
@@ -1232,7 +1240,7 @@ def create_app():
                         scale=2,
                     )
                     delete_history_btn = gr.Button(
-                        "🗑️ Delete Selected",
+                        DELETE_BUTTON_LABEL,
                         variant="stop",
                         interactive=False,
                         scale=1,
@@ -1242,7 +1250,7 @@ def create_app():
                     history_audio = gr.Audio(label="Selected Output Preview", type="filepath", interactive=False)
                     history_meta = gr.Textbox(
                         label="Embedded Generation Metadata",
-                        value="Select a WAV row below to inspect its settings.",
+                        value=HISTORY_PLACEHOLDER,
                         interactive=False,
                         lines=6,
                         max_lines=8,
@@ -1253,7 +1261,9 @@ def create_app():
                     headers=["Created", "Model", "Duration", "CFG", "Seed", "Prompt", "File"],
                     datatype=["str", "str", "str", "str", "str", "str", "str"],
                     interactive=False,
-                    wrap=False,
+                    wrap=True,
+                    column_widths=["14%", "9%", "7%", "5%", "11%", "30%", "24%"],
+                    show_search="search",
                     elem_classes=["history-table"],
                 )
 
@@ -1264,10 +1274,11 @@ def create_app():
                         records,
                         None,
                         None,
-                        "Select a WAV row below to inspect its settings.",
+                        HISTORY_PLACEHOLDER,
                         gr.update(interactive=False),
                         gr.update(interactive=False),
-                        gr.update(interactive=False),
+                        gr.update(interactive=False, value=DELETE_BUTTON_LABEL),
+                        False,
                     )
 
                 def on_select_row(records: list[dict], evt: gr.SelectData):
@@ -1276,10 +1287,11 @@ def create_app():
                         return (
                             None,
                             None,
-                            "Select a WAV row below to inspect its settings.",
+                            HISTORY_PLACEHOLDER,
                             gr.update(interactive=False),
                             gr.update(interactive=False),
-                            gr.update(interactive=False),
+                            gr.update(interactive=False, value=DELETE_BUTTON_LABEL),
+                            False,
                         )
                     rec = records[row_idx]
                     has_valid_meta = bool(rec.get("has_metadata") and rec.get("model") in MODELS)
@@ -1289,7 +1301,8 @@ def create_app():
                         _format_metadata_summary(rec),
                         gr.update(interactive=has_valid_meta),
                         gr.update(interactive=True),
-                        gr.update(interactive=True),
+                        gr.update(interactive=True, value=DELETE_BUTTON_LABEL),
+                        False,
                     )
 
                 tab_order = [m for m, _, _, _ in TAB_CONFIG]
@@ -1307,6 +1320,7 @@ def create_app():
                             ctrl["seed"],
                             ctrl["normalize_audio"],
                             ctrl["fade_out"],
+                            ctrl["postproc_accordion"],
                         ]
                     )
 
@@ -1324,7 +1338,7 @@ def create_app():
                     )
 
                 def on_load_settings(selected_path: str | None):
-                    noop = [gr.update()] * (1 + len(tab_order) * 9)
+                    noop = [gr.update()] * (1 + len(tab_order) * 10)
                     if not selected_path:
                         gr.Warning("Please select an output file first.")
                         return tuple(noop)
@@ -1359,10 +1373,11 @@ def create_app():
                                     seed_val,
                                     norm_val,
                                     fade_val,
+                                    gr.update(label=postproc_accordion_label(True, norm_val, fade_val)),
                                 ]
                             )
                         else:
-                            updates.extend([gr.update()] * 9)
+                            updates.extend([gr.update()] * 10)
 
                     gr.Info(f"Loaded settings into '{target_model}' tab.")
                     return tuple(updates)
@@ -1380,7 +1395,7 @@ def create_app():
                         if m == target_model:
                             updates.extend(
                                 [
-                                    gr.Accordion(open=True),
+                                    gr.update(open=True, label=audio_accordion_label("Audio-to-Audio (Remix)")),
                                     "Audio-to-Audio (Remix)",
                                     gr.update(value=selected_path, visible=True),
                                     gr.update(visible=True),
@@ -1393,10 +1408,17 @@ def create_app():
                     gr.Info(f"Sent audio to '{target_model}' Remix / Inpaint input.")
                     return tuple(updates)
 
-                def on_delete_selected(selected_path: str | None):
+                def on_delete_selected(selected_path: str | None, armed: bool):
+                    """Two-step delete: first click arms the button, second click deletes permanently."""
                     if not selected_path:
                         gr.Warning("Please select an output file first.")
                         return refresh_history()
+                    if not armed:
+                        return (
+                            *([gr.skip()] * 7),
+                            gr.update(value=CONFIRM_DELETE_LABEL),
+                            True,
+                        )
                     try:
                         deleted = delete_output_file(selected_path)
                     except GenerationError as e:
@@ -1417,6 +1439,7 @@ def create_app():
                     load_settings_btn,
                     send_remix_btn,
                     delete_history_btn,
+                    delete_armed_state,
                 ]
                 history_tab.select(fn=refresh_history, inputs=[], outputs=history_outputs)
                 refresh_history_btn.click(fn=refresh_history, inputs=[], outputs=history_outputs)
@@ -1430,6 +1453,7 @@ def create_app():
                         load_settings_btn,
                         send_remix_btn,
                         delete_history_btn,
+                        delete_armed_state,
                     ],
                 )
                 load_settings_btn.click(
@@ -1444,7 +1468,7 @@ def create_app():
                 )
                 delete_history_btn.click(
                     fn=on_delete_selected,
-                    inputs=[selected_wav_state],
+                    inputs=[selected_wav_state, delete_armed_state],
                     outputs=history_outputs,
                 )
 

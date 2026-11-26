@@ -177,6 +177,10 @@ class GenerationConfig:
                 raise GenerationError(
                     f"Invalid inpaint range: start={self.inpaint_start}s, end={self.inpaint_end}s."
                 )
+            if float(self.inpaint_start) >= float(self.duration):
+                raise GenerationError(
+                    f"Inpaint start ({self.inpaint_start}s) must be earlier than duration ({self.duration}s)."
+                )
         if float(self.fade_out_seconds) < 0.0:
             raise GenerationError(f"fade_out_seconds must be non-negative (got {self.fade_out_seconds}).")
 

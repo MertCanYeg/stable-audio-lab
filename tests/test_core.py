@@ -367,7 +367,7 @@ class TestGenerationLifecycle(unittest.TestCase):
             seed=42,
         )
         first_step = next(gen)
-        out_single, s1, s2, s3, s4, s5, status = first_step
+        out_single, s1, s2, s3, s4, s5, _last_seed, status = first_step
         self.assertIsNone(out_single)
         self.assertIsNone(s1["value"])
         self.assertIsNone(s2["value"])
@@ -614,6 +614,8 @@ class TestRobustnessAndCancellation(unittest.TestCase):
 
             with self.assertRaises(GenerationError):
                 GenerationConfig(prompt="inpaint", inpaint_audio_path=tmp_path, inpaint_start=5.0, inpaint_end=3.0).validate()
+            with self.assertRaises(GenerationError):
+                GenerationConfig(prompt="inpaint", duration=4.0, inpaint_audio_path=tmp_path, inpaint_start=4.0, inpaint_end=6.0).validate()
 
             with self.assertRaises(GenerationError):
                 GenerationConfig(prompt="remix", init_audio_path="does_not_exist_12345.wav").validate()
@@ -684,9 +686,15 @@ class TestRobustnessAndCancellation(unittest.TestCase):
             )
 
         seen_seeds = []
+        progress_calls = []
+
+        def fake_progress(value, desc=None, unit=None):
+            progress_calls.append((value, desc, unit))
 
         def fake_gen(config, progress=None, status_callback=None, cancel_event=None):
             seen_seeds.append(config.seed)
+            if progress:
+                progress((1, 4), desc="Sampling", unit="steps")
             return GenerationResult(
                 output_path=f"outputs/s_{config.seed}.wav",
                 status_message="ok",
@@ -710,6 +718,7 @@ class TestRobustnessAndCancellation(unittest.TestCase):
                     embed_metadata=True,
                     seed=100,
                     seed_batch_count=3,
+                    progress=fake_progress,
                 )
             )
 
@@ -718,7 +727,27 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         self.assertEqual(last[1]["value"], "outputs/s_100.wav")
         self.assertEqual(last[2]["value"], "outputs/s_101.wav")
         self.assertEqual(last[3]["value"], "outputs/s_102.wav")
+        self.assertEqual(last[6], 100)
         self.assertIn("Completed Seed Batch: 3 variations", last[-1])
+        self.assertTrue(any("[1/3 · Seed 100] Sampling" == desc for _, desc, _ in progress_calls))
+        self.assertTrue(any("[3/3 · Seed 102] Sampling" == desc for _, desc, _ in progress_calls))
+
+    def test_accordion_label_helpers(self):
+        from app import (
+            AUDIO_ACCORDION_LABEL,
+            POSTPROC_ACCORDION_LABEL,
+            audio_accordion_label,
+            postproc_accordion_label,
+        )
+
+        self.assertEqual(audio_accordion_label("Off"), AUDIO_ACCORDION_LABEL)
+        self.assertIn("Remix active", audio_accordion_label("Audio-to-Audio (Remix)"))
+        self.assertIn("Inpainting active", audio_accordion_label("Inpainting"))
+        self.assertEqual(postproc_accordion_label(True, False, 0.0), POSTPROC_ACCORDION_LABEL)
+        summary = postproc_accordion_label(False, True, 1.5)
+        self.assertIn("Normalize", summary)
+        self.assertIn("Fade 1.5s", summary)
+        self.assertIn("Metadata off", summary)
 
     def test_mcp_and_download_models_helpers(self):
         import download_models
