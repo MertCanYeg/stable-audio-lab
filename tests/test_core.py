@@ -749,6 +749,22 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         self.assertIn("Fade 1.5s", summary)
         self.assertIn("Metadata off", summary)
 
+    def test_app_per_slot_progress_targets(self):
+        import gradio as gr
+        from app import create_app
+
+        demo = create_app()
+        progress_deps = [
+            d for d in demo.fns.values()
+            if getattr(d, "show_progress", None) == "full" and getattr(d, "show_progress_on", None)
+        ]
+        # 3 model tabs * (1 single audio slot + 5 sweep audio slots) = 18 individual Audio targets
+        self.assertEqual(len(progress_deps), 18)
+        for dep in progress_deps:
+            targets = dep.show_progress_on
+            self.assertEqual(len(targets), 1)
+            self.assertIsInstance(targets[0], gr.Audio)
+
     def test_mcp_and_download_models_helpers(self):
         import download_models
         import mcp_server

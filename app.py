@@ -236,21 +236,6 @@ CUSTOM_CSS = """
     justify-content: flex-start !important;
     margin-right: auto !important;
 }
-.progress-host,
-.progress-host.block {
-    min-height: 44px !important;
-    border: 1px solid var(--block-border-color) !important;
-    border-radius: var(--block-radius) !important;
-    background: var(--block-background-fill) !important;
-    padding: 8px 14px !important;
-    margin-bottom: 4px !important;
-    display: flex !important;
-    align-items: center !important;
-}
-.progress-host p {
-    margin: 0 !important;
-    font-size: 0.88rem !important;
-}
 .action-btn-row {
     display: flex !important;
     align-items: stretch !important;
@@ -339,6 +324,7 @@ POSTPROC_ACCORDION_LABEL = "🎚️ Output & Post-Processing"
 DELETE_BUTTON_LABEL = "🗑️ Delete Selected"
 CONFIRM_DELETE_LABEL = "⚠️ Confirm Delete"
 HISTORY_PLACEHOLDER = "Select a WAV row below to inspect its settings."
+HISTORY_EMPTY_MSG = "No generated WAV files found in outputs/ yet. Generate audio in any model tab to see it here."
 
 
 def audio_accordion_label(mode: str) -> str:
@@ -362,7 +348,7 @@ def postproc_accordion_label(embed_metadata: bool, normalize: bool, fade_out_sec
     return f"{POSTPROC_ACCORDION_LABEL} · {' · '.join(parts)}" if parts else POSTPROC_ACCORDION_LABEL
 
 
-def generate(
+def _build_generation_plan(
     model_name: str,
     prompt: str,
     negative_prompt: str,
@@ -381,10 +367,8 @@ def generate(
     inpaint_end: float = 5.0,
     normalize_audio: bool = False,
     fade_out_seconds: float = 0.0,
-    progress=gr.Progress(track_tqdm=False),
-):
-    """Generate audio (Single, CFG Sweep, or Seed Batch) with optional audio conditioning and post-processing."""
-    # 1. Strict generate-time parameter validation BEFORE any yield so existing outputs are preserved on failure
+) -> dict:
+    """Validate inputs and construct a serializable execution plan for Single, CFG Sweep, or Seed Batch."""
     if not prompt or not prompt.strip():
         raise gr.Error("❌ Prompt cannot be empty. Please enter a prompt.")
 
@@ -395,13 +379,13 @@ def generate(
 
     cfgs: list[float] = [cfg]
     seeds_list: list[int] = []
-    variation_labels: list[str] = []
+    labels: list[str] = []
 
     if mode == "CFG Sweep":
         is_valid, cfgs, err_msg = validate_cfg_sweep(cfg_sweep_text)
         if not is_valid:
             raise gr.Error(f"❌ Invalid CFG sweep input: {err_msg}")
-        variation_labels = [f"CFG {c}" for c in cfgs]
+        labels = [f"CFG {c}" for c in cfgs]
     elif mode == "Seed Batch":
         batch_n = max(2, min(5, int(seed_batch_count)))
         if seed is None or int(seed) == -1:
@@ -409,7 +393,7 @@ def generate(
         else:
             base_s = int(seed)
             seeds_list = [base_s + i for i in range(batch_n)]
-        variation_labels = [f"Seed {s}" for s in seeds_list]
+        labels = [f"Seed {s}" for s in seeds_list]
 
     init_path: str | None = None
     inpaint_path: str | None = None
@@ -426,116 +410,121 @@ def generate(
             raise gr.Error(f"❌ Inpaint Start ({float(inpaint_start):g}s) must be earlier than Duration ({float(duration):g}s).")
         inpaint_path = source_audio
 
-    is_multi = mode in ("CFG Sweep", "Seed Batch")
+    def _cfg_dict(cfg_val: float, seed_val: int) -> dict:
+        return {
+            "model_name": model_name,
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "duration": float(duration),
+            "steps": int(steps),
+            "cfg_scale": float(cfg_val),
+            "seed": int(seed_val),
+            "embed_metadata": bool(embed_metadata),
+            "init_audio_path": init_path,
+            "init_noise_level": float(init_noise_level),
+            "inpaint_audio_path": inpaint_path,
+            "inpaint_start": float(inpaint_start) if inpaint_path else None,
+            "inpaint_end": float(inpaint_end) if inpaint_path else None,
+            "normalize_audio": bool(normalize_audio),
+            "fade_out_seconds": float(fade_out_seconds),
+        }
 
+    if mode == "Single":
+        return {
+            "mode": "Single",
+            "model_name": model_name,
+            "configs": [_cfg_dict(cfg, seed if seed is not None else -1)],
+            "labels": [],
+            "header": "",
+            "var_headers": [],
+            "summary_msg": "",
+            "last_seed": None,
+        }
+
+    if mode == "CFG Sweep":
+        shared_seed = random.randint(0, 2**31 - 1) if (seed is None or int(seed) == -1) else int(seed)
+        return {
+            "mode": "CFG Sweep",
+            "model_name": model_name,
+            "configs": [_cfg_dict(c_val, shared_seed) for c_val in cfgs],
+            "labels": labels,
+            "header": f"[sweep] Starting CFG Sweep ({len(cfgs)} variations) | Shared Seed: {shared_seed}",
+            "var_headers": [f"\n[variation {i + 1}/{len(cfgs)}] CFG: {c_val} (Seed: {shared_seed})" for i, c_val in enumerate(cfgs)],
+            "summary_msg": f"Completed CFG Sweep: {len(cfgs)} variations generated with Seed {shared_seed}.",
+            "last_seed": shared_seed,
+        }
+
+    seeds_str = ", ".join(str(s) for s in seeds_list)
+    return {
+        "mode": "Seed Batch",
+        "model_name": model_name,
+        "configs": [_cfg_dict(cfg, s_val) for s_val in seeds_list],
+        "labels": labels,
+        "header": f"[batch] Starting Seed Batch ({len(seeds_list)} variations) | CFG: {cfg}",
+        "var_headers": [f"\n[variation {i + 1}/{len(seeds_list)}] Seed: {s_val} (CFG: {cfg})" for i, s_val in enumerate(seeds_list)],
+        "summary_msg": f"Completed Seed Batch: {len(seeds_list)} variations generated with Seeds {seeds_str}.",
+        "last_seed": seeds_list[0],
+    }
+
+
+def _format_slot_error(err: Exception, duration: float, model_name: str, logs: list[str]) -> tuple[str, str]:
+    """Handle OOM/domain error cleanup and return (toast_error_msg, console_display_text)."""
+    if isinstance(err, StableAudioError):
+        toast_msg = str(err)
+        console_err = f"❌ Error: {err}"
+    elif isinstance(err, torch.cuda.OutOfMemoryError):
+        unload_model()
+        toast_msg = (
+            f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
+            f"Model cache cleared; try reducing duration or switching to a smaller model."
+        )
+        console_err = toast_msg
+    elif isinstance(err, MemoryError):
+        unload_model()
+        toast_msg = (
+            f"❌ System RAM exhausted loading or running '{model_name}'. "
+            f"Close other memory-heavy apps or switch to a smaller model."
+        )
+        console_err = toast_msg
+    else:
+        toast_msg = f"❌ Generation failed: {err}"
+        console_err = toast_msg
+
+    full_log = f"{chr(10).join(logs)}\n\n{console_err}" if logs else console_err
+    return toast_msg, full_log
+
+
+def _run_job_stream(
+    config_dict: dict,
+    progress,
+    logs: list[str],
+    cancel_event: threading.Event,
+    header_lines: list[str] | None = None,
+    init_msg: str | None = None,
+):
+    """Run a single GenerationConfig in a worker thread, yielding thread-safe progress and SSE heartbeats."""
     q: queue.Queue = queue.Queue()
-    logs: list[str] = []
-    init_msg = f"Initializing {model_name}..."
-    logs.append(init_msg)
 
-    # 2. Validation passed -> immediately clear outputs to signify start of a fresh generation
-    yield None, gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(), init_msg
-
-    sweep_files: list[str | None] = [None, None, None, None, None]
-    active_var_idx: int = 0 if is_multi else -1
-    progress_prefix: list[str] = [""]
-
-    def _sweep_updates(files: list[str | None], labels_list: list[str], multi_active: bool, active_idx: int):
-        if not multi_active:
-            return [gr.update(value=None)] * 5
-        updates = []
-        for i in range(5):
-            if i < len(labels_list):
-                f_path = files[i] if i < len(files) else None
-                base_label = labels_list[i]
-                if f_path is not None:
-                    slot_label = f"✅ {base_label}"
-                elif i == active_idx:
-                    slot_label = f"⏳ {base_label} (Generating...)"
-                elif active_idx >= 0 and i > active_idx:
-                    slot_label = f"🕒 {base_label} (Queued)"
-                else:
-                    slot_label = base_label
-                updates.append(gr.update(value=f_path, visible=True, label=slot_label))
-            else:
-                updates.append(gr.update(value=None, visible=False))
-        return updates
+    if header_lines:
+        if init_msg and logs == [init_msg]:
+            logs.clear()
+        logs.extend(header_lines)
+        yield ("status", None, "\n".join(logs))
 
     def queue_progress(value, desc=None, unit=None):
-        full_desc = f"{progress_prefix[0]}{desc}" if (is_multi and desc and progress_prefix[0]) else desc
-        q.put(("progress", (value, full_desc, unit)))
-
-    cancel_event = threading.Event()
-
-    def _make_config(cfg_val: float, seed_val: int) -> GenerationConfig:
-        return GenerationConfig(
-            model_name=model_name,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            duration=duration,
-            steps=steps,
-            cfg_scale=cfg_val,
-            seed=seed_val,
-            embed_metadata=embed_metadata,
-            init_audio_path=init_path,
-            init_noise_level=float(init_noise_level),
-            inpaint_audio_path=inpaint_path,
-            inpaint_start=float(inpaint_start) if inpaint_path else None,
-            inpaint_end=float(inpaint_end) if inpaint_path else None,
-            normalize_audio=bool(normalize_audio),
-            fade_out_seconds=float(fade_out_seconds),
-        )
+        q.put(("progress", (value, desc, unit)))
 
     def worker():
         try:
-            if mode == "Single":
-                config = _make_config(cfg, seed)
-                config.validate()
-                result = generate_audio(
-                    config=config,
-                    progress=queue_progress,
-                    status_callback=lambda msg: q.put(("status", msg)),
-                    cancel_event=cancel_event,
-                )
-                q.put(("done_single", result))
-            elif mode == "CFG Sweep":
-                shared_seed = random.randint(0, 2**31 - 1) if (seed is None or int(seed) == -1) else int(seed)
-                q.put(("status", f"[sweep] Starting CFG Sweep ({len(cfgs)} variations) | Shared Seed: {shared_seed}"))
-                for idx, c_val in enumerate(cfgs):
-                    if cancel_event.is_set():
-                        raise GenerationCancelledError("Generation cancelled.")
-                    progress_prefix[0] = f"[{idx + 1}/{len(cfgs)} · CFG {c_val}] "
-                    q.put(("var_start", idx))
-                    q.put(("status", f"\n[variation {idx + 1}/{len(cfgs)}] CFG: {c_val} (Seed: {shared_seed})"))
-                    var_cfg = _make_config(c_val, shared_seed)
-                    var_cfg.validate()
-                    res = generate_audio(
-                        config=var_cfg,
-                        progress=queue_progress,
-                        status_callback=lambda msg: q.put(("status", msg)),
-                        cancel_event=cancel_event,
-                    )
-                    q.put(("done_variation", (idx, res)))
-                q.put(("done_sweep", (f"Completed CFG Sweep: {len(cfgs)} variations generated with Seed {shared_seed}.", shared_seed)))
-            else:
-                q.put(("status", f"[batch] Starting Seed Batch ({len(seeds_list)} variations) | CFG: {cfg}"))
-                for idx, s_val in enumerate(seeds_list):
-                    if cancel_event.is_set():
-                        raise GenerationCancelledError("Generation cancelled.")
-                    progress_prefix[0] = f"[{idx + 1}/{len(seeds_list)} · Seed {s_val}] "
-                    q.put(("var_start", idx))
-                    q.put(("status", f"\n[variation {idx + 1}/{len(seeds_list)}] Seed: {s_val} (CFG: {cfg})"))
-                    var_cfg = _make_config(cfg, s_val)
-                    var_cfg.validate()
-                    res = generate_audio(
-                        config=var_cfg,
-                        progress=queue_progress,
-                        status_callback=lambda msg: q.put(("status", msg)),
-                        cancel_event=cancel_event,
-                    )
-                    q.put(("done_variation", (idx, res)))
-                seeds_str = ", ".join(str(s) for s in seeds_list)
-                q.put(("done_sweep", (f"Completed Seed Batch: {len(seeds_list)} variations generated with Seeds {seeds_str}.", seeds_list[0])))
+            config = GenerationConfig(**config_dict)
+            config.validate()
+            result = generate_audio(
+                config=config,
+                progress=queue_progress,
+                status_callback=lambda msg: q.put(("status", msg)),
+                cancel_event=cancel_event,
+            )
+            q.put(("done", result))
         except GenerationCancelledError as e:
             q.put(("cancelled", str(e)))
         except Exception as e:
@@ -561,7 +550,7 @@ def generate(
                     elapsed_s = int(now - stage_start_time)
                     heartbeat_logs = list(logs)
                     heartbeat_logs[-1] = f"{heartbeat_logs[-1]} ({elapsed_s}s)"
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), "\n".join(heartbeat_logs)
+                    yield ("status", None, "\n".join(heartbeat_logs))
                 continue
 
             last_activity_time = time.time()
@@ -574,15 +563,8 @@ def generate(
                     else:
                         progress(val, desc=desc)
 
-            elif event_type == "var_start":
-                active_var_idx = payload
-                display_text = "\n".join(logs)
-                if active_sampling_bar:
-                    display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
-
             elif event_type == "status":
-                if logs == [init_msg]:
+                if init_msg and logs == [init_msg]:
                     logs.clear()
 
                 if payload.startswith("[sampling]"):
@@ -595,63 +577,139 @@ def generate(
                 display_text = "\n".join(logs)
                 if active_sampling_bar:
                     display_text = f"{display_text}\n{active_sampling_bar}" if display_text else active_sampling_bar
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
+                yield ("status", None, display_text)
 
-            elif event_type == "done_single":
-                summary_display = f"{chr(10).join(logs)}\n\n✅ {payload.status_message}"
-                yield payload.output_path, *([gr.update(value=None)] * 5), payload.seed, summary_display
-                break
-
-            elif event_type == "done_variation":
-                idx, res = payload
-                if idx < len(sweep_files):
-                    sweep_files[idx] = res.output_path
-                display_text = "\n".join(logs)
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
-
-            elif event_type == "done_sweep":
-                summary_msg, last_seed = payload
-                active_var_idx = -1
-                summary_display = f"{chr(10).join(logs)}\n\n✅ {summary_msg}"
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), last_seed, summary_display
+            elif event_type == "done":
+                yield ("done", payload, "\n".join(logs))
                 break
 
             elif event_type == "cancelled":
-                active_var_idx = -1
                 cancel_msg = f"⏹️ {payload or 'Generation cancelled.'}"
                 display_text = f"{chr(10).join(logs)}\n\n{cancel_msg}" if logs else cancel_msg
-                yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), display_text
+                yield ("cancelled", None, display_text)
                 break
 
             elif event_type == "error":
-                active_var_idx = -1
-                err = payload
-                if isinstance(err, StableAudioError):
-                    err_msg = f"❌ Error: {err}"
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
-                    raise gr.Error(str(err)) from err
-                elif isinstance(err, torch.cuda.OutOfMemoryError):
-                    unload_model()
-                    oom_msg = (
-                        f"❌ GPU out of memory generating {duration:.0f}s with '{model_name}'. "
-                        f"Model cache cleared; try reducing duration or switching to a smaller model."
-                    )
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{oom_msg}" if logs else oom_msg
-                    raise gr.Error(oom_msg) from err
-                elif isinstance(err, MemoryError):
-                    unload_model()
-                    ram_msg = (
-                        f"❌ System RAM exhausted loading or running '{model_name}'. "
-                        f"Close other memory-heavy apps or switch to a smaller model."
-                    )
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{ram_msg}" if logs else ram_msg
-                    raise gr.Error(ram_msg) from err
-                else:
-                    err_msg = f"❌ Generation failed: {err}"
-                    yield None, *(_sweep_updates(sweep_files, variation_labels, is_multi, active_var_idx)), gr.update(), f"{chr(10).join(logs)}\n\n{err_msg}" if logs else err_msg
-                    raise gr.Error(err_msg) from err
+                yield ("error", payload, "\n".join(logs))
+                break
     finally:
         cancel_event.set()
+
+
+def generate(
+    model_name: str,
+    prompt: str,
+    negative_prompt: str,
+    duration: float,
+    steps: int,
+    cfg: float,
+    cfg_sweep_text: str,
+    is_sweep: bool | str,
+    embed_metadata: bool,
+    seed: int,
+    seed_batch_count: int = 2,
+    audio_mode: str = "Off",
+    source_audio: str | None = None,
+    init_noise_level: float = 0.7,
+    inpaint_start: float = 0.0,
+    inpaint_end: float = 5.0,
+    normalize_audio: bool = False,
+    fade_out_seconds: float = 0.0,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Generate audio (Single, CFG Sweep, or Seed Batch) in a single streaming generator."""
+    plan = _build_generation_plan(
+        model_name=model_name,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        duration=duration,
+        steps=steps,
+        cfg=cfg,
+        cfg_sweep_text=cfg_sweep_text,
+        is_sweep=is_sweep,
+        embed_metadata=embed_metadata,
+        seed=seed,
+        seed_batch_count=seed_batch_count,
+        audio_mode=audio_mode,
+        source_audio=source_audio,
+        init_noise_level=init_noise_level,
+        inpaint_start=inpaint_start,
+        inpaint_end=inpaint_end,
+        normalize_audio=normalize_audio,
+        fade_out_seconds=fade_out_seconds,
+    )
+
+    mode = plan["mode"]
+    is_multi = mode != "Single"
+    variation_labels = plan["labels"]
+    init_msg = f"Initializing {model_name}..."
+    logs: list[str] = [init_msg]
+
+    yield None, gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(), init_msg
+
+    sweep_files: list[str | None] = [None, None, None, None, None]
+
+    def _sweep_updates(files: list[str | None]):
+        if not is_multi:
+            return [gr.update(value=None)] * 5
+        updates = []
+        for i in range(5):
+            if i < len(variation_labels):
+                f_path = files[i] if i < len(files) else None
+                updates.append(gr.update(value=f_path, visible=True, label=variation_labels[i]))
+            else:
+                updates.append(gr.update(value=None, visible=False))
+        return updates
+
+    cancel_event = threading.Event()
+    configs = plan["configs"]
+    total = len(configs)
+
+    for idx, cfg_dict in enumerate(configs):
+        header_lines: list[str] = []
+        if is_multi:
+            if idx == 0:
+                header_lines.append(plan["header"])
+            header_lines.append(plan["var_headers"][idx])
+
+        def _prefixed_progress(val, desc=None, unit=None, _idx=idx):
+            if progress is None:
+                return
+            if is_multi and desc:
+                desc = f"[{_idx + 1}/{total} · {variation_labels[_idx]}] {desc}"
+            if unit is not None:
+                progress(val, desc=desc, unit=unit)
+            else:
+                progress(val, desc=desc)
+
+        for kind, payload, display_text in _run_job_stream(
+            cfg_dict,
+            _prefixed_progress,
+            logs,
+            cancel_event,
+            header_lines=header_lines,
+            init_msg=init_msg,
+        ):
+            if kind == "status":
+                yield None, *(_sweep_updates(sweep_files)), gr.update(), display_text
+            elif kind == "done":
+                if not is_multi:
+                    summary_display = f"{display_text}\n\n✅ {payload.status_message}"
+                    yield payload.output_path, *([gr.update(value=None)] * 5), payload.seed, summary_display
+                    return
+                sweep_files[idx] = payload.output_path
+                if idx == total - 1:
+                    summary_display = f"{display_text}\n\n✅ {plan['summary_msg']}"
+                    yield None, *(_sweep_updates(sweep_files)), plan["last_seed"], summary_display
+                    return
+                yield None, *(_sweep_updates(sweep_files)), gr.update(), display_text
+            elif kind == "cancelled":
+                yield None, *(_sweep_updates(sweep_files)), gr.update(), display_text
+                return
+            elif kind == "error":
+                toast_msg, full_log = _format_slot_error(payload, duration, model_name, logs)
+                yield None, *(_sweep_updates(sweep_files)), gr.update(), full_log
+                raise gr.Error(toast_msg) from payload
 
 
 def build_model_tab(
@@ -773,13 +831,13 @@ def build_model_tab(
                     inpaint_end = gr.Number(value=5.0, minimum=0.1, label="Inpaint End (s)")
             with gr.Accordion(POSTPROC_ACCORDION_LABEL, open=False, elem_classes=["option-accordion"]) as postproc_accordion:
                 embed_metadata_toggle = gr.Checkbox(
-                    label="🏷️ Embed generation metadata in WAV",
+                    label="Embed generation metadata in WAV",
                     value=True,
                     elem_classes=["metadata-toggle"],
                 )
                 with gr.Row():
                     normalize_audio_toggle = gr.Checkbox(
-                        label="🔊 Peak Normalize (-1 dBFS)",
+                        label="Peak Normalize (-1 dBFS)",
                         value=False,
                         elem_classes=["metadata-toggle"],
                     )
@@ -788,7 +846,7 @@ def build_model_tab(
                         maximum=5.0,
                         value=0.0,
                         step=0.1,
-                        label="📉 Fade-Out (seconds)",
+                        label="Fade-Out (seconds)",
                     )
             with gr.Row(equal_height=True, elem_classes=["action-btn-row"]):
                 generate_btn = gr.Button(
@@ -804,6 +862,7 @@ def build_model_tab(
                     size="lg",
                     scale=1,
                     min_width=76,
+                    interactive=False,
                 )
                 clear_btn = gr.Button(
                     "🗑️ Clear",
@@ -814,10 +873,8 @@ def build_model_tab(
                 )
 
         with gr.Column(scale=1):
-            progress_host = gr.Markdown(
-                "Status: **Idle** — ready to generate.",
-                elem_classes=["progress-host"],
-            )
+            jobs_state = gr.State(None)
+            logs_state = gr.State([])
             with gr.Group(visible=True, elem_classes=["single-audio-box"]) as single_box:
                 output_audio = gr.Audio(label="Generated Audio", type="filepath", interactive=False)
             with gr.Group(visible=False, elem_classes=["sweep-box"]) as sweep_box:
@@ -1044,8 +1101,150 @@ def build_model_tab(
         ],
     )
 
-    gen_event = generate_btn.click(
-        fn=functools.partial(generate, model_name),
+    def prepare_generation(
+        prompt_val: str,
+        neg_val: str,
+        dur_val: float,
+        steps_val: int,
+        cfg_val: float,
+        cfg_sweep_text: str,
+        mode_val: str,
+        embed_val: bool,
+        seed_val: int,
+        batch_count_val: int,
+        audio_mode_val: str,
+        source_audio_val: str | None,
+        noise_val: float,
+        inpaint_start_val: float,
+        inpaint_end_val: float,
+        norm_val: bool,
+        fade_val: float,
+    ):
+        plan = _build_generation_plan(
+            model_name=model_name,
+            prompt=prompt_val,
+            negative_prompt=neg_val,
+            duration=dur_val,
+            steps=steps_val,
+            cfg=cfg_val,
+            cfg_sweep_text=cfg_sweep_text,
+            is_sweep=mode_val,
+            embed_metadata=embed_val,
+            seed=seed_val,
+            seed_batch_count=batch_count_val,
+            audio_mode=audio_mode_val,
+            source_audio=source_audio_val,
+            init_noise_level=noise_val,
+            inpaint_start=inpaint_start_val,
+            inpaint_end=inpaint_end_val,
+            normalize_audio=norm_val,
+            fade_out_seconds=fade_val,
+        )
+        init_msg = f"Initializing {model_name}..."
+        if plan["mode"] == "Single":
+            slot_clears = [gr.update(value=None)] * 5
+        else:
+            labels = plan["labels"]
+            slot_clears = [
+                gr.update(value=None, visible=True, label=labels[i])
+                if i < len(labels)
+                else gr.update(value=None, visible=False)
+                for i in range(5)
+            ]
+        return (
+            None,
+            *slot_clears,
+            init_msg,
+            plan,
+            [init_msg],
+            gr.update(interactive=False),
+            gr.update(interactive=True),
+        )
+
+    def run_single_slot(
+        plan: dict | None,
+        current_logs: list[str] | None,
+        progress=gr.Progress(track_tqdm=False),
+    ):
+        if not plan or plan.get("mode") != "Single":
+            yield (gr.skip(),) * 6
+            return
+
+        logs = list(current_logs or [])
+        cfg_dict = plan["configs"][0]
+        cancel_event = threading.Event()
+        init_msg = f"Initializing {plan['model_name']}..."
+
+        for kind, payload, display_text in _run_job_stream(
+            cfg_dict,
+            progress,
+            logs,
+            cancel_event,
+            init_msg=init_msg,
+        ):
+            if kind == "status":
+                yield gr.skip(), gr.skip(), display_text, logs, gr.skip(), gr.skip()
+            elif kind == "done":
+                summary_display = f"{display_text}\n\n✅ {payload.status_message}"
+                yield payload.output_path, payload.seed, summary_display, logs, gr.update(interactive=True), gr.update(interactive=False)
+                return
+            elif kind == "cancelled":
+                yield None, gr.skip(), display_text, logs, gr.update(interactive=True), gr.update(interactive=False)
+                return
+            elif kind == "error":
+                toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
+                yield None, gr.skip(), full_log, logs, gr.update(interactive=True), gr.update(interactive=False)
+                raise gr.Error(toast_msg) from payload
+
+    def run_multi_slot(
+        slot_idx: int,
+        plan: dict | None,
+        current_logs: list[str] | None,
+        progress=gr.Progress(track_tqdm=False),
+    ):
+        if not plan or plan.get("mode") == "Single" or slot_idx >= len(plan.get("configs", [])):
+            yield (gr.skip(),) * 6
+            return
+
+        configs = plan["configs"]
+        total = len(configs)
+        is_last = slot_idx == total - 1
+        cfg_dict = configs[slot_idx]
+        logs = list(current_logs or [])
+        header_lines = []
+        if slot_idx == 0:
+            header_lines.append(plan["header"])
+        header_lines.append(plan["var_headers"][slot_idx])
+        cancel_event = threading.Event()
+        init_msg = f"Initializing {plan['model_name']}..."
+
+        for kind, payload, display_text in _run_job_stream(
+            cfg_dict,
+            progress,
+            logs,
+            cancel_event,
+            header_lines=header_lines,
+            init_msg=init_msg,
+        ):
+            if kind == "status":
+                yield gr.skip(), gr.skip(), display_text, logs, gr.skip(), gr.skip()
+            elif kind == "done":
+                if is_last:
+                    summary_display = f"{display_text}\n\n✅ {plan['summary_msg']}"
+                    yield payload.output_path, plan["last_seed"], summary_display, logs, gr.update(interactive=True), gr.update(interactive=False)
+                else:
+                    yield payload.output_path, gr.skip(), display_text, logs, gr.skip(), gr.skip()
+                return
+            elif kind == "cancelled":
+                yield None, gr.skip(), display_text, logs, gr.update(interactive=True), gr.update(interactive=False)
+                return
+            elif kind == "error":
+                toast_msg, full_log = _format_slot_error(payload, cfg_dict["duration"], plan["model_name"], logs)
+                yield None, gr.skip(), full_log, logs, gr.update(interactive=True), gr.update(interactive=False)
+                raise gr.Error(toast_msg) from payload
+
+    ev_prep = generate_btn.click(
+        fn=prepare_generation,
         inputs=[
             prompt,
             negative_prompt,
@@ -1072,14 +1271,44 @@ def build_model_tab(
             sweep_audio_3,
             sweep_audio_4,
             sweep_audio_5,
-            last_seed_box,
             status,
+            jobs_state,
+            logs_state,
+            generate_btn,
+            stop_btn,
         ],
-        show_progress="full",
-        show_progress_on=[progress_host],
+        show_progress="hidden",
     )
 
-    stop_btn.click(fn=None, cancels=[gen_event])
+    ev_single = ev_prep.success(
+        fn=run_single_slot,
+        inputs=[jobs_state, logs_state],
+        outputs=[output_audio, last_seed_box, status, logs_state, generate_btn, stop_btn],
+        show_progress="full",
+        show_progress_on=[output_audio],
+    )
+
+    sweep_slots = [sweep_audio_1, sweep_audio_2, sweep_audio_3, sweep_audio_4, sweep_audio_5]
+    chain_prev = ev_single
+    sweep_events = []
+    for idx, slot_comp in enumerate(sweep_slots):
+        ev_slot = chain_prev.success(
+            fn=functools.partial(run_multi_slot, idx),
+            inputs=[jobs_state, logs_state],
+            outputs=[slot_comp, last_seed_box, status, logs_state, generate_btn, stop_btn],
+            show_progress="full",
+            show_progress_on=[slot_comp],
+        )
+        sweep_events.append(ev_slot)
+        chain_prev = ev_slot
+
+    stop_btn.click(
+        fn=lambda: (gr.update(interactive=True), gr.update(interactive=False)),
+        inputs=[],
+        outputs=[generate_btn, stop_btn],
+        cancels=[ev_prep, ev_single, *sweep_events],
+        show_progress="hidden",
+    )
 
     def reset_all():
         return (
@@ -1116,7 +1345,7 @@ def build_model_tab(
             examples=spec.examples,
             inputs=[prompt, duration],
             examples_per_page=100,
-            label="📋 Prompt Templates (click any row to load)",
+            label="Prompt Templates (click any row to load)",
         )
 
     return {
@@ -1190,7 +1419,7 @@ def create_app():
         with gr.Row(elem_classes=["header-row"]):
             gr.Markdown(f"*{get_device_info()}*")
             unload_btn = gr.Button(
-                "🧹 Unload Model / Free VRAM",
+                "Unload VRAM",
                 variant="secondary",
                 size="sm",
                 scale=0,
@@ -1269,12 +1498,13 @@ def create_app():
 
                 def refresh_history():
                     records = list_recent_outputs()
+                    msg = HISTORY_PLACEHOLDER if records else HISTORY_EMPTY_MSG
                     return (
                         _format_history_rows(records),
                         records,
                         None,
                         None,
-                        HISTORY_PLACEHOLDER,
+                        msg,
                         gr.update(interactive=False),
                         gr.update(interactive=False),
                         gr.update(interactive=False, value=DELETE_BUTTON_LABEL),
