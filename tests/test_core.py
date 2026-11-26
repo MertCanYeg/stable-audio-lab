@@ -759,14 +759,77 @@ class TestRobustnessAndCancellation(unittest.TestCase):
             d for d in demo.fns.values()
             if getattr(d, "show_progress", None) == "full" and getattr(d, "show_progress_on", None)
         ]
-        # 3 model tabs * (1 single audio slot + 5 sweep audio slots) = 18 individual Audio targets
-        self.assertEqual(len(progress_deps), 18)
+        # 3 model tabs * (1 model banner load + 1 single audio slot + 5 sweep audio slots) = 21 targets
+        self.assertEqual(len(progress_deps), 21)
+        audio_targets = 0
+        banner_targets = 0
         for dep in progress_deps:
             targets = dep.show_progress_on
             self.assertEqual(len(targets), 1)
-            self.assertIsInstance(targets[0], gr.Audio)
+            if isinstance(targets[0], gr.Audio):
+                audio_targets += 1
+            elif isinstance(targets[0], gr.Markdown):
+                banner_targets += 1
+            else:
+                self.fail(f"Unexpected progress target type: {type(targets[0])}")
             # Direct return functions (non-generators) prevent intermediate yields from resetting gr.Progress
             self.assertFalse(inspect.isgeneratorfunction(dep.fn))
+        self.assertEqual(audio_targets, 18)
+        self.assertEqual(banner_targets, 3)
+
+    def test_run_load_blocking_and_skip_cached(self):
+        import threading
+        from unittest.mock import patch
+        import gradio as gr
+        from app import _LIVE_LOGS, _format_live_logs, _run_load_blocking, create_app
+
+        progress_calls = []
+
+        def fake_progress(val, desc=None, unit=None):
+            progress_calls.append((val, desc, unit))
+
+        def fake_load_model(model_name, progress=None, status_callback=None, cancel_event=None):
+            if status_callback:
+                status_callback("[load] [1/4] Building...")
+            if progress:
+                progress((1, 4), desc="[load] [1/4] Building...", unit="stage")
+                progress((4, 4), desc="[load] [4/4] Ready.", unit="stage")
+            return object()
+
+        logs = ["Initializing medium..."]
+        _LIVE_LOGS.pop("load-tab", None)
+        with patch("app.load_model", side_effect=fake_load_model):
+            kind, payload, display_text = _run_load_blocking(
+                "medium",
+                fake_progress,
+                logs,
+                threading.Event(),
+                init_msg="Initializing medium...",
+                live_log_key="load-tab",
+            )
+
+        self.assertEqual(kind, "done")
+        self.assertEqual(payload, "medium")
+        self.assertIn("[load] [1/4] Building...", display_text)
+        self.assertNotIn("Initializing medium...", display_text)
+        self.assertIn(((4, 4), "[load] [4/4] Ready.", "stage"), progress_calls)
+        self.assertIn("[load] [1/4] Building...", _format_live_logs("load-tab"))
+        _LIVE_LOGS.pop("load-tab", None)
+
+        # Verify ensure_model_loaded skips instantaneously when model is already cached in VRAM
+        demo = create_app()
+        load_deps = [
+            d for d in demo.fns.values()
+            if getattr(d, "show_progress", None) == "full"
+            and getattr(d, "show_progress_on", None)
+            and isinstance(d.show_progress_on[0], gr.Markdown)
+        ]
+        self.assertEqual(len(load_deps), 3)
+        with patch("app.get_loaded_model_name", return_value="small-music"):
+            small_music_loader = load_deps[0].fn
+            res = small_music_loader({"model_name": "small-music", "configs": []}, ["Initializing..."])
+            self.assertEqual(len(res), 6)
+            self.assertTrue(all(x == gr.skip() for x in res))
 
     def test_run_job_blocking_routes_progress_and_heartbeat(self):
         import threading

@@ -558,7 +558,7 @@ def generate_audio(
 
             # Stage 3: Decode latents and export WAV
             if progress:
-                progress((0, None), desc="Decoding audio latents and saving WAV...", unit="")
+                progress((total_steps, total_steps), desc="Decoding & saving WAV...", unit="steps")
             _emit_log("[generate] Decoding audio latents and saving WAV...", status_callback)
             decode_start = time.time()
 

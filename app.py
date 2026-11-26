@@ -25,7 +25,9 @@ from core import (
     delete_output_file,
     generate_audio,
     get_device_info,
+    get_loaded_model_name,
     list_recent_outputs,
+    load_model,
     parse_cfg_sweep,
     read_wav_metadata,
     unload_model,
@@ -159,10 +161,13 @@ CUSTOM_CSS = """
     padding: 6px 14px !important;
     overflow: visible !important;
 }
+.model-info-banner.block:has(.wrap) {
+    min-height: 72px !important;
+}
 .model-info-banner .prose,
 .model-info-banner [data-testid="markdown-wrapper"],
 .model-info-banner span.md,
-.model-info-banner div:not(.block) {
+.model-info-banner div:not(.block):not(.wrap):not(.wrap *) {
     height: auto !important;
     min-height: 0 !important;
     max-height: none !important;
@@ -724,16 +729,16 @@ def _format_live_logs(key: str | None) -> str:
     return text
 
 
-def _run_job_blocking(
-    config_dict: dict,
+def _run_worker_with_progress(
+    worker_fn,
     progress,
     logs: list[str],
-    cancel_event: threading.Event,
     header_lines: list[str] | None = None,
     init_msg: str | None = None,
     live_log_key: str | None = None,
+    initial_desc: str = "Starting...",
 ) -> tuple[str, object, str]:
-    """Run a single GenerationConfig without intermediate yields so gr.Progress never flickers."""
+    """Run a blocking worker with queued gr.Progress updates, live logs, and 2s heartbeats."""
     q: queue.Queue = queue.Queue()
 
     if header_lines:
@@ -742,30 +747,21 @@ def _run_job_blocking(
         logs.extend(header_lines)
         _set_live_logs(live_log_key, logs)
 
-    last_desc = "Starting..."
+    last_desc = initial_desc
     in_sampling = False
     active_sampling_bar: str | None = None
 
     def queue_progress(value, desc=None, unit=None):
         q.put(("progress", (value, desc, unit)))
 
-    def worker():
-        try:
-            config = GenerationConfig(**config_dict)
-            config.validate()
-            result = generate_audio(
-                config=config,
-                progress=queue_progress,
-                status_callback=lambda msg: q.put(("status", msg)),
-                cancel_event=cancel_event,
-            )
-            q.put(("done", result))
-        except GenerationCancelledError as e:
-            q.put(("cancelled", str(e)))
-        except Exception as e:
-            q.put(("error", e))
+    def status_callback(msg: str):
+        q.put(("status", msg))
 
-    thread = threading.Thread(target=worker, daemon=True)
+    thread = threading.Thread(
+        target=worker_fn,
+        args=(q, queue_progress, status_callback),
+        daemon=True,
+    )
     thread.start()
 
     last_activity_time = time.time()
@@ -827,6 +823,75 @@ def _run_job_blocking(
             return "error", payload, "\n".join(logs)
 
     return "cancelled", None, "\n".join(logs)
+
+
+def _run_load_blocking(
+    model_name: str,
+    progress,
+    logs: list[str],
+    cancel_event: threading.Event,
+    init_msg: str | None = None,
+    live_log_key: str | None = None,
+) -> tuple[str, object, str]:
+    """Load model weights in a worker thread with progress routed to the model banner."""
+    def worker(q: queue.Queue, queue_progress, status_callback):
+        try:
+            load_model(
+                model_name=model_name,
+                progress=queue_progress,
+                status_callback=status_callback,
+                cancel_event=cancel_event,
+            )
+            q.put(("done", model_name))
+        except GenerationCancelledError as e:
+            q.put(("cancelled", str(e)))
+        except Exception as e:
+            q.put(("error", e))
+
+    return _run_worker_with_progress(
+        worker,
+        progress=progress,
+        logs=logs,
+        init_msg=init_msg,
+        live_log_key=live_log_key,
+        initial_desc=f"Loading '{model_name}'...",
+    )
+
+
+def _run_job_blocking(
+    config_dict: dict,
+    progress,
+    logs: list[str],
+    cancel_event: threading.Event,
+    header_lines: list[str] | None = None,
+    init_msg: str | None = None,
+    live_log_key: str | None = None,
+) -> tuple[str, object, str]:
+    """Run a single GenerationConfig without intermediate yields so gr.Progress never flickers."""
+    def worker(q: queue.Queue, queue_progress, status_callback):
+        try:
+            config = GenerationConfig(**config_dict)
+            config.validate()
+            result = generate_audio(
+                config=config,
+                progress=queue_progress,
+                status_callback=status_callback,
+                cancel_event=cancel_event,
+            )
+            q.put(("done", result))
+        except GenerationCancelledError as e:
+            q.put(("cancelled", str(e)))
+        except Exception as e:
+            q.put(("error", e))
+
+    return _run_worker_with_progress(
+        worker,
+        progress=progress,
+        logs=logs,
+        header_lines=header_lines,
+        init_msg=init_msg,
+        live_log_key=live_log_key,
+    )
 
 
 def _run_job_stream(
@@ -1061,7 +1126,7 @@ def build_model_tab(
         f"**{spec.name}** | Repo: `{spec.repo_id}` | Max Duration: {spec.max_duration:.0f}s | "
         f"Audio: 44.1 kHz Stereo | Cache: {cache_st.status_text}"
     )
-    gr.Markdown(banner, elem_classes=["model-info-banner"])
+    model_banner = gr.Markdown(banner, elem_classes=["model-info-banner"])
 
     with gr.Row():
         with gr.Column(scale=1):
@@ -1682,7 +1747,46 @@ def build_model_tab(
         show_progress="hidden",
     )
 
-    ev_single = ev_prep.success(
+    def ensure_model_loaded(
+        plan: dict | None,
+        current_logs: list[str] | None,
+        progress=gr.Progress(track_tqdm=False),
+    ):
+        if not plan or get_loaded_model_name() == model_name:
+            return (gr.skip(),) * 6
+
+        logs = list(current_logs or [])
+        init_msg = f"Initializing {model_name}..."
+        kind, payload, display_text = _run_load_blocking(
+            model_name,
+            progress,
+            logs,
+            _UI_CANCEL_EVENT,
+            init_msg=init_msg,
+            live_log_key=model_name,
+        )
+        if kind == "done":
+            _set_live_logs(model_name, logs)
+            return display_text, logs, gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        if kind == "cancelled":
+            _set_live_logs(model_name, [display_text])
+            return display_text, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
+
+        cfg_dict = (plan.get("configs") or [{}])[0]
+        toast_msg, full_log = _format_slot_error(payload, cfg_dict.get("duration", 0.0), model_name, logs)
+        _set_live_logs(model_name, [full_log])
+        gr.Warning(toast_msg)
+        return full_log, logs, None, gr.update(interactive=True), gr.update(interactive=False), gr.Timer(active=False)
+
+    ev_load = ev_prep.success(
+        fn=ensure_model_loaded,
+        inputs=[jobs_state, logs_state],
+        outputs=[status, logs_state, jobs_state, generate_btn, stop_btn, log_timer],
+        show_progress="full",
+        show_progress_on=[model_banner],
+    )
+
+    ev_single = ev_load.success(
         fn=run_single_slot,
         inputs=[jobs_state, logs_state],
         outputs=[output_audio, last_seed_box, status, logs_state, jobs_state, generate_btn, stop_btn, log_timer],
@@ -1712,7 +1816,7 @@ def build_model_tab(
         fn=on_stop_click,
         inputs=[],
         outputs=[generate_btn, stop_btn, log_timer],
-        cancels=[ev_prep, ev_single, *sweep_events],
+        cancels=[ev_prep, ev_load, ev_single, *sweep_events],
         show_progress="hidden",
     )
 
