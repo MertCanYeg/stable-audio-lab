@@ -774,3 +774,29 @@ def delete_output_file(wav_path: Union[str, Path], output_dir: Union[str, Path] 
         return False
     target.unlink()
     return True
+
+
+def extract_waveform_peaks(audio_path: Union[str, Path], num_bars: int = 120) -> Tuple[float, list[float]]:
+    """Extract duration in seconds and normalized amplitude envelope peaks for UI waveform rendering."""
+    path = Path(audio_path)
+    if not path.is_file():
+        raise GenerationError(f"Audio file not found: {audio_path}")
+    try:
+        data, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    except Exception as e:
+        raise GenerationError(f"Failed to read audio file '{path.name}': {e}") from e
+
+    if sr <= 0 or data.shape[0] == 0:
+        return 0.0, [0.0] * max(1, num_bars)
+
+    duration_s = float(data.shape[0]) / float(sr)
+    envelope = np.max(np.abs(data), axis=1)
+    bars = max(1, int(num_bars))
+    bins = np.array_split(envelope, bars)
+    peaks = [float(np.max(b)) if b.size > 0 else 0.0 for b in bins]
+    max_peak = max(peaks) if peaks else 0.0
+    if max_peak > 1e-8:
+        peaks = [round(p / max_peak, 4) for p in peaks]
+    else:
+        peaks = [0.0] * bars
+    return round(duration_s, 3), peaks
