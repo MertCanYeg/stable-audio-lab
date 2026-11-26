@@ -23,7 +23,6 @@ from core import (
     StableAudioError,
     check_model_cache,
     delete_output_file,
-    extract_waveform_peaks,
     generate_audio,
     get_device_info,
     list_recent_outputs,
@@ -33,7 +32,7 @@ from core import (
     validate_cfg_sweep,
 )
 
-APP_JS = """
+AUTO_SCROLL_JS = """
 () => {
     const observer = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
@@ -54,145 +53,6 @@ APP_JS = """
         }
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    const round1 = (v) => Math.round(v * 10) / 10;
-
-    const updatePickerVisuals = (picker, startS, endS) => {
-        const dur = parseFloat(picker.dataset.duration || '0');
-        if (!(dur > 0)) return;
-        const s = clamp(round1(startS), 0, Math.max(0, round1(dur - 0.1)));
-        const e = clamp(round1(endS), Math.min(dur, round1(s + 0.1)), dur);
-        picker.dataset.start = String(s);
-        picker.dataset.end = String(e);
-
-        const leftPct = (s / dur) * 100;
-        const widthPct = Math.max(0.5, ((e - s) / dur) * 100);
-        const sel = picker.querySelector('.irp-selection');
-        if (sel) {
-            sel.style.left = leftPct.toFixed(3) + '%';
-            sel.style.width = widthPct.toFixed(3) + '%';
-        }
-        const readout = picker.querySelector('.irp-readout');
-        if (readout) {
-            const span = round1(e - s);
-            readout.textContent = 'Inpaint Region: ' + s.toFixed(1) + 's – ' + e.toFixed(1) + 's (' + span.toFixed(1) + 's)';
-        }
-    };
-
-    const syncNumberInput = (elemId, val) => {
-        const root = document.getElementById(elemId);
-        if (!root) return;
-        const input = root.querySelector('input');
-        if (!input) return;
-        const formatted = round1(val).toFixed(1);
-        if (input.value === formatted) return;
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        setter.call(input, formatted);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-    };
-
-    let dragState = null;
-
-    document.addEventListener('pointerdown', (e) => {
-        const track = e.target.closest('.irp-track');
-        if (!track) return;
-        const picker = track.closest('.inpaint-region-picker');
-        if (!picker) return;
-        const dur = parseFloat(picker.dataset.duration || '0');
-        if (!(dur > 0)) return;
-
-        e.preventDefault();
-        const rect = track.getBoundingClientRect();
-        const ratio = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-        const clickTime = ratio * dur;
-        const curStart = parseFloat(picker.dataset.start || '0');
-        const curEnd = parseFloat(picker.dataset.end || String(dur));
-
-        let mode = 'paint';
-        if (e.target.closest('.irp-handle-start')) {
-            mode = 'start';
-        } else if (e.target.closest('.irp-handle-end')) {
-            mode = 'end';
-        } else if (e.target.closest('.irp-selection')) {
-            mode = 'move';
-        }
-
-        dragState = {
-            picker,
-            track,
-            rect,
-            dur,
-            mode,
-            anchorTime: clickTime,
-            origStart: curStart,
-            origEnd: curEnd,
-            span: Math.max(0.1, curEnd - curStart),
-        };
-        if (track.setPointerCapture) {
-            try { track.setPointerCapture(e.pointerId); } catch (_) {}
-        }
-    });
-
-    document.addEventListener('pointermove', (e) => {
-        if (!dragState) return;
-        const { picker, rect, dur, mode, anchorTime, origStart, origEnd, span } = dragState;
-        const ratio = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-        const curTime = ratio * dur;
-
-        let newStart = origStart;
-        let newEnd = origEnd;
-
-        if (mode === 'start') {
-            newStart = clamp(curTime, 0, Math.max(0, origEnd - 0.1));
-        } else if (mode === 'end') {
-            newEnd = clamp(curTime, Math.min(dur, origStart + 0.1), dur);
-        } else if (mode === 'move') {
-            const delta = curTime - anchorTime;
-            newStart = clamp(origStart + delta, 0, Math.max(0, dur - span));
-            newEnd = clamp(newStart + span, Math.min(dur, newStart + 0.1), dur);
-        } else {
-            newStart = Math.min(anchorTime, curTime);
-            newEnd = Math.max(anchorTime, curTime);
-            if (newEnd - newStart < 0.1) {
-                newEnd = Math.min(dur, newStart + 0.1);
-                newStart = Math.max(0, newEnd - 0.1);
-            }
-        }
-
-        updatePickerVisuals(picker, newStart, newEnd);
-        const tab = picker.dataset.tab;
-        if (tab) {
-            const s = parseFloat(picker.dataset.start);
-            const en = parseFloat(picker.dataset.end);
-            syncNumberInput('inpaint-start-' + tab, s);
-            syncNumberInput('inpaint-end-' + tab, en);
-        }
-    });
-
-    const endDrag = () => {
-        dragState = null;
-    };
-    document.addEventListener('pointerup', endDrag);
-    document.addEventListener('pointercancel', endDrag);
-
-    document.addEventListener('input', (e) => {
-        if (dragState) return;
-        const wrap = e.target.closest('[id^="inpaint-start-"], [id^="inpaint-end-"]');
-        if (!wrap) return;
-        const tab = wrap.id.replace(/^inpaint-(start|end)-/, '');
-        const picker = document.querySelector('.inpaint-region-picker[data-tab="' + tab + '"]');
-        if (!picker) return;
-        const sInput = document.querySelector('#inpaint-start-' + tab + ' input');
-        const eInput = document.querySelector('#inpaint-end-' + tab + ' input');
-        if (!sInput || !eInput) return;
-        const sVal = parseFloat(sInput.value);
-        const eVal = parseFloat(eInput.value);
-        if (!Number.isNaN(sVal) && !Number.isNaN(eVal) && eVal > sVal) {
-            updatePickerVisuals(picker, sVal, eVal);
-        }
-    });
 }
 """
 
@@ -424,118 +284,6 @@ CUSTOM_CSS = """
 .history-table th {
     white-space: nowrap !important;
 }
-.inpaint-region-picker {
-    border: 1px solid var(--block-border-color);
-    border-radius: var(--block-radius);
-    background: #0d1117;
-    padding: 10px 12px 8px 12px;
-    user-select: none;
-    color: #e6edf3;
-}
-.inpaint-region-empty {
-    border: 1px dashed var(--block-border-color);
-    border-radius: var(--block-radius);
-    background: rgba(13, 17, 23, 0.55);
-    padding: 14px 12px;
-    text-align: center;
-    font-size: 0.84rem;
-    color: var(--body-text-color-subdued);
-}
-.irp-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.82rem;
-    margin-bottom: 8px;
-    gap: 8px;
-}
-.irp-readout {
-    font-weight: 600;
-    color: #fb923c;
-    font-variant-numeric: tabular-nums;
-}
-.irp-total {
-    color: #8b949e;
-    font-variant-numeric: tabular-nums;
-}
-.irp-track {
-    position: relative;
-    height: 68px;
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    overflow: hidden;
-    cursor: crosshair;
-    touch-action: none;
-}
-.irp-bars {
-    position: absolute;
-    inset: 6px 4px;
-    display: flex;
-    align-items: center;
-    gap: 1.5px;
-    pointer-events: none;
-}
-.irp-bar {
-    flex: 1 1 0;
-    background: #484f58;
-    border-radius: 1px;
-    min-height: 3px;
-}
-.irp-selection {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    background: rgba(249, 115, 22, 0.24);
-    border-left: 2px solid #f97316;
-    border-right: 2px solid #f97316;
-    box-sizing: border-box;
-    cursor: grab;
-}
-.irp-selection:active {
-    cursor: grabbing;
-}
-.irp-handle {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 12px;
-    cursor: ew-resize;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.irp-handle-start {
-    left: -7px;
-}
-.irp-handle-end {
-    right: -7px;
-}
-.irp-handle::after {
-    content: "";
-    width: 4px;
-    height: 24px;
-    border-radius: 2px;
-    background: #f97316;
-    box-shadow: 0 0 0 1px rgba(13, 17, 23, 0.8);
-}
-.irp-handle:hover::after {
-    background: #fdba74;
-    height: 30px;
-}
-.irp-ticks {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.72rem;
-    color: #8b949e;
-    margin-top: 4px;
-    font-variant-numeric: tabular-nums;
-}
-.irp-hint {
-    font-size: 0.74rem;
-    color: #8b949e;
-    margin-top: 4px;
-}
 """
 
 TAB_CONFIG = [
@@ -600,53 +348,36 @@ def postproc_accordion_label(embed_metadata: bool, normalize: bool, fade_out_sec
     return f"{POSTPROC_ACCORDION_LABEL} · {' · '.join(parts)}" if parts else POSTPROC_ACCORDION_LABEL
 
 
-def _render_inpaint_waveform_html(
-    tab_key: str,
-    duration: float | None,
-    peaks: list[float] | None,
-    start_s: float,
-    end_s: float,
-) -> str:
-    """Render an interactive DAW-style waveform region selector for inpainting."""
-    if not duration or duration <= 0 or not peaks:
-        return (
-            '<div class="inpaint-region-empty">'
-            "Upload a Source Audio file above to visually select the inpaint region."
-            "</div>"
-        )
-
-    dur = float(duration)
-    s = max(0.0, min(float(start_s), max(0.0, round(dur - 0.1, 1))))
-    e = max(min(dur, round(s + 0.1, 1)), min(float(end_s), dur))
-    span = round(e - s, 1)
-    left_pct = (s / dur) * 100.0
-    width_pct = max(0.5, ((e - s) / dur) * 100.0)
-
-    bars_html = "".join(
-        f'<div class="irp-bar" style="height:{max(6.0, min(100.0, p * 100.0)):.1f}%"></div>'
-        for p in peaks
-    )
-    ticks = [0.0, dur * 0.25, dur * 0.5, dur * 0.75, dur]
-    ticks_html = "".join(f"<span>{t:.1f}s</span>" for t in ticks)
-
-    return (
-        f'<div class="inpaint-region-picker" data-tab="{tab_key}" '
-        f'data-duration="{dur:.3f}" data-start="{s:.1f}" data-end="{e:.1f}">'
-        f'<div class="irp-header">'
-        f'<span class="irp-readout">Inpaint Region: {s:.1f}s – {e:.1f}s ({span:.1f}s)</span>'
-        f'<span class="irp-total">Total: {dur:.1f}s</span>'
-        f"</div>"
-        f'<div class="irp-track">'
-        f'<div class="irp-bars">{bars_html}</div>'
-        f'<div class="irp-selection" style="left:{left_pct:.3f}%;width:{width_pct:.3f}%">'
-        f'<div class="irp-handle irp-handle-start" title="Drag start time"></div>'
-        f'<div class="irp-handle irp-handle-end" title="Drag end time"></div>'
-        f"</div>"
-        f"</div>"
-        f'<div class="irp-ticks">{ticks_html}</div>'
-        f'<div class="irp-hint">Drag handles, slide the highlighted window, or drag across the waveform — or type exact seconds below.</div>'
-        f"</div>"
-    )
+def _read_playhead_js(audio_elem_id: str) -> str:
+    """Return a minimal JS snippet reading the current playback time (seconds) from gr.Audio."""
+    return f"""(currentVal) => {{
+        const root = document.getElementById('{audio_elem_id}');
+        if (!root) return currentVal;
+        const findAudio = (node) => {{
+            if (!node) return null;
+            if (node.tagName === 'AUDIO') return node;
+            for (const el of node.querySelectorAll('*')) {{
+                if (el.tagName === 'AUDIO') return el;
+                if (el.shadowRoot) {{
+                    const found = findAudio(el.shadowRoot);
+                    if (found) return found;
+                }}
+            }}
+            return null;
+        }};
+        const audio = findAudio(root);
+        if (audio && Number.isFinite(audio.currentTime)) {{
+            return Math.round(audio.currentTime * 10) / 10;
+        }}
+        const timeEl = root.querySelector('time');
+        if (timeEl) {{
+            const parts = timeEl.textContent.trim().split(':').map(Number);
+            if (parts.length === 2 && parts.every(Number.isFinite)) {{
+                return Math.round((parts[0] * 60 + parts[1]) * 10) / 10;
+            }}
+        }}
+        return currentVal;
+    }}"""
 
 
 def _build_generation_plan(
@@ -1213,6 +944,7 @@ def build_model_tab(
                     label="Source Audio",
                     type="filepath",
                     visible=False,
+                    elem_id=f"source-audio-{model_name}",
                 )
                 init_noise_level = gr.Slider(
                     minimum=0.05,
@@ -1224,25 +956,24 @@ def build_model_tab(
                     visible=False,
                 )
                 with gr.Group(visible=False) as inpaint_row:
-                    inpaint_picker = gr.HTML(
-                        value=_render_inpaint_waveform_html(model_name, None, None, 0.0, 5.0),
-                        elem_id=f"inpaint-picker-{model_name}",
-                    )
                     with gr.Row():
-                        inpaint_start = gr.Number(
-                            value=0.0,
+                        inpaint_start = gr.Slider(
                             minimum=0.0,
+                            maximum=float(spec.max_duration),
+                            value=0.0,
                             step=0.1,
                             label="Inpaint Start (s)",
-                            elem_id=f"inpaint-start-{model_name}",
                         )
-                        inpaint_end = gr.Number(
-                            value=5.0,
+                        inpaint_end = gr.Slider(
                             minimum=0.1,
+                            maximum=float(spec.max_duration),
+                            value=5.0,
                             step=0.1,
                             label="Inpaint End (s)",
-                            elem_id=f"inpaint-end-{model_name}",
                         )
+                    with gr.Row(elem_classes=["seed-actions"]):
+                        set_start_btn = gr.Button("Set Start from Playhead", size="sm")
+                        set_end_btn = gr.Button("Set End from Playhead", size="sm")
             with gr.Accordion(POSTPROC_ACCORDION_LABEL, open=False, elem_classes=["option-accordion"]) as postproc_accordion:
                 embed_metadata_toggle = gr.Checkbox(
                     label="Embed generation metadata in WAV",
@@ -1403,39 +1134,58 @@ def build_model_tab(
     )
 
     def on_source_audio_change(path: str | None, current_start: float | None, current_end: float | None):
-        """Match Duration and populate the interactive waveform picker from the source audio."""
+        """Match Duration and slider ranges from the uploaded source audio."""
         if not path:
-            return (
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                _render_inpaint_waveform_html(model_name, None, None, 0.0, 5.0),
-            )
+            return gr.update(), gr.update(), gr.update()
         try:
-            src_seconds, peaks = extract_waveform_peaks(path)
+            src_seconds = float(sf.info(path).duration)
         except Exception:
             gr.Warning("Could not read this audio file. Please use WAV, FLAC, OGG, or MP3.")
-            return (
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                _render_inpaint_waveform_html(model_name, None, None, 0.0, 5.0),
-            )
+            return gr.update(), gr.update(), gr.update()
         dur_val = int(max(1, min(spec.max_duration, round(src_seconds))))
-        end_default = min(float(current_end), float(src_seconds)) if (current_end and float(current_end) > 0) else min(5.0, round(src_seconds, 1))
-        end_val = round(max(min(src_seconds, 0.1), end_default), 1)
+        max_s = max(0.2, round(src_seconds, 1))
+        end_default = min(float(current_end), max_s) if (current_end and float(current_end) > 0) else min(5.0, max_s)
+        end_val = round(max(0.1, end_default), 1)
         start_val = round(max(0.0, min(float(current_start or 0.0), max(0.0, end_val - 0.1))), 1)
         if src_seconds > spec.max_duration:
             gr.Info(f"Source is {src_seconds:.1f}s; Duration clamped to the model maximum of {spec.max_duration:.0f}s.")
         else:
             gr.Info(f"Duration set to {dur_val}s to match the source audio ({src_seconds:.1f}s).")
-        picker_html = _render_inpaint_waveform_html(model_name, src_seconds, peaks, start_val, end_val)
-        return dur_val, start_val, end_val, picker_html
+        return (
+            dur_val,
+            gr.update(maximum=max_s, value=start_val),
+            gr.update(maximum=max_s, value=end_val),
+        )
 
     source_audio.change(
         fn=on_source_audio_change,
         inputs=[source_audio, inpaint_start, inpaint_end],
-        outputs=[duration, inpaint_start, inpaint_end, inpaint_picker],
+        outputs=[duration, inpaint_start, inpaint_end],
+    )
+
+    inpaint_start.release(
+        fn=lambda s: gr.update(playback_position=float(s)),
+        inputs=[inpaint_start],
+        outputs=[source_audio],
+        show_progress="hidden",
+    )
+    inpaint_end.release(
+        fn=lambda e: gr.update(playback_position=float(e)),
+        inputs=[inpaint_end],
+        outputs=[source_audio],
+        show_progress="hidden",
+    )
+    set_start_btn.click(
+        fn=None,
+        inputs=[inpaint_start],
+        outputs=[inpaint_start],
+        js=_read_playhead_js(f"source-audio-{model_name}"),
+    )
+    set_end_btn.click(
+        fn=None,
+        inputs=[inpaint_end],
+        outputs=[inpaint_end],
+        js=_read_playhead_js(f"source-audio-{model_name}"),
     )
 
     def on_postproc_change(embed: bool, normalize: bool, fade: float):
@@ -1783,7 +1533,6 @@ def build_model_tab(
         "source_audio": source_audio,
         "init_noise_level": init_noise_level,
         "inpaint_row": inpaint_row,
-        "inpaint_picker": inpaint_picker,
         "inpaint_start": inpaint_start,
         "inpaint_end": inpaint_end,
     }
@@ -1836,7 +1585,7 @@ def _format_metadata_summary(rec: dict) -> str:
 def create_app():
     """Create the root Gradio Blocks application."""
     with gr.Blocks(title="Stable Audio Lab") as demo:
-        demo.load(None, js=APP_JS)
+        demo.load(None, js=AUTO_SCROLL_JS)
         gr.Markdown("# Stable Audio Lab")
         with gr.Row(elem_classes=["header-row"]):
             gr.Markdown(f"*{get_device_info()}*")
@@ -1986,7 +1735,6 @@ def create_app():
                             ctrl["source_audio"],
                             ctrl["init_noise_level"],
                             ctrl["inpaint_row"],
-                            ctrl["inpaint_picker"],
                             ctrl["inpaint_start"],
                             ctrl["inpaint_end"],
                         ]
@@ -2038,22 +1786,21 @@ def create_app():
                     return tuple(updates)
 
                 def on_send_to_remix(selected_path: str | None):
-                    noop = [gr.update()] * (1 + len(tab_order) * 8)
+                    noop = [gr.update()] * (1 + len(tab_order) * 7)
                     if not selected_path:
                         gr.Warning("Please select an output file first.")
                         return tuple(noop)
                     meta = read_wav_metadata(selected_path)
                     target_model = meta.get("model") if (meta and meta.get("model") in MODELS) else "small-music"
 
-                    picker_update = gr.update()
                     start_update = gr.update()
                     end_update = gr.update()
                     try:
-                        src_seconds, peaks = extract_waveform_peaks(selected_path)
-                        end_val = round(min(5.0, src_seconds), 1)
-                        picker_update = _render_inpaint_waveform_html(target_model, src_seconds, peaks, 0.0, end_val)
-                        start_update = 0.0
-                        end_update = end_val
+                        src_seconds = float(sf.info(selected_path).duration)
+                        max_s = max(0.2, round(src_seconds, 1))
+                        end_val = round(min(5.0, max_s), 1)
+                        start_update = gr.update(maximum=max_s, value=0.0)
+                        end_update = gr.update(maximum=max_s, value=end_val)
                     except Exception:
                         pass
 
@@ -2067,13 +1814,12 @@ def create_app():
                                     gr.update(value=selected_path, visible=True),
                                     gr.update(visible=True),
                                     gr.update(visible=False),
-                                    picker_update,
                                     start_update,
                                     end_update,
                                 ]
                             )
                         else:
-                            updates.extend([gr.update()] * 8)
+                            updates.extend([gr.update()] * 7)
 
                     gr.Info(f"Sent audio to '{target_model}' Remix / Inpaint input.")
                     return tuple(updates)

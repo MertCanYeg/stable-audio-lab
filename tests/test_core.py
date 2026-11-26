@@ -10,7 +10,6 @@ from core.engine import (
     GenerationResult,
     apply_post_processing,
     delete_output_file,
-    extract_waveform_peaks,
     generate_audio,
     get_loaded_model_name,
     list_recent_outputs,
@@ -813,43 +812,12 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         self.assertIn(((1, 2), "Sampling", "steps"), progress_calls)
         self.assertIn(((2, 2), "Sampling", "steps"), progress_calls)
 
-    def test_extract_waveform_peaks_and_picker_html(self):
-        import os
-        import tempfile
-        import numpy as np
-        import soundfile as sf
-        from app import _render_inpaint_waveform_html
+    def test_read_playhead_js_helper(self):
+        from app import _read_playhead_js
 
-        empty_html = _render_inpaint_waveform_html("small-music", None, None, 0.0, 5.0)
-        self.assertIn("inpaint-region-empty", empty_html)
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            wav_path = os.path.join(tmp_dir, "tone.wav")
-            sr = 8000
-            t = np.linspace(0.0, 2.0, sr * 2, endpoint=False, dtype=np.float32)
-            audio = np.stack([0.5 * np.sin(2 * np.pi * 440 * t), 0.25 * np.sin(2 * np.pi * 440 * t)], axis=1)
-            sf.write(wav_path, audio, sr, subtype="PCM_16")
-
-            dur, peaks = extract_waveform_peaks(wav_path, num_bars=60)
-            self.assertAlmostEqual(dur, 2.0, places=2)
-            self.assertEqual(len(peaks), 60)
-            self.assertTrue(all(0.0 <= p <= 1.0 for p in peaks))
-            self.assertAlmostEqual(max(peaks), 1.0, places=3)
-
-            html = _render_inpaint_waveform_html("small-music", dur, peaks, 0.5, 1.5)
-            self.assertIn('data-tab="small-music"', html)
-            self.assertIn('data-start="0.5"', html)
-            self.assertIn('data-end="1.5"', html)
-            self.assertEqual(html.count('class="irp-bar"'), 60)
-
-            silent_path = os.path.join(tmp_dir, "silent.wav")
-            sf.write(silent_path, np.zeros((sr, 2), dtype=np.float32), sr, subtype="PCM_16")
-            s_dur, s_peaks = extract_waveform_peaks(silent_path, num_bars=20)
-            self.assertAlmostEqual(s_dur, 1.0, places=2)
-            self.assertEqual(s_peaks, [0.0] * 20)
-
-        with self.assertRaises(GenerationError):
-            extract_waveform_peaks("nonexistent_audio_12345.wav")
+        js_code = _read_playhead_js("source-audio-small-music")
+        self.assertIn("source-audio-small-music", js_code)
+        self.assertIn("currentTime", js_code)
 
     def test_mcp_and_download_models_helpers(self):
         import download_models
