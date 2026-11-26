@@ -169,7 +169,7 @@ CUSTOM_CSS = """
 .table-wrap {
     max-height: 280px !important;
     overflow-y: auto !important;
-    border-radius: 6px !important;
+    border-radius: var(--block-radius) !important;
     border: 1px solid var(--border-color-primary) !important;
 }
 .table-wrap tr:hover {
@@ -177,7 +177,7 @@ CUSTOM_CSS = """
     cursor: pointer !important;
 }
 .model-info-banner.block {
-    border-radius: 6px !important;
+    border-radius: var(--block-radius) !important;
     background-color: var(--background-fill-secondary) !important;
     margin-top: 0px !important;
     margin-bottom: 8px !important;
@@ -254,14 +254,17 @@ CUSTOM_CSS = """
     line-height: 1.45 !important;
     background-color: #0d1117 !important;
     color: #e6edf3 !important;
-    border: 1px solid #30363d !important;
-    border-radius: 6px !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: var(--block-radius) !important;
     height: 296px !important;
     white-space: pre-wrap !important;
     word-break: break-word !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
     padding-bottom: 8px !important;
+}
+.history-meta textarea {
+    height: 156px !important;
 }
 .single-audio-box,
 .single-audio-box .gr-group,
@@ -281,7 +284,7 @@ CUSTOM_CSS = """
 .single-audio-box .block,
 .sweep-box .block {
     border: 1px solid var(--block-border-color) !important;
-    border-radius: 4px !important;
+    border-radius: var(--block-radius) !important;
     background: var(--block-background-fill) !important;
     box-shadow: none !important;
     height: auto !important;
@@ -297,7 +300,8 @@ CUSTOM_CSS = """
     gap: 6px !important;
     flex-wrap: nowrap !important;
 }
-.seed-actions button {
+.seed-actions button,
+.inpaint-controls-row button {
     min-height: 32px !important;
     font-size: 0.85rem !important;
     padding: 4px 8px !important;
@@ -360,17 +364,30 @@ CUSTOM_CSS = """
     padding: 8px 12px !important;
     box-sizing: border-box !important;
 }
+.history-toolbar {
+    display: flex !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+}
+.history-toolbar button {
+    min-height: 38px !important;
+    font-size: 0.9rem !important;
+    white-space: nowrap !important;
+}
 .sweep-box {
     display: flex !important;
     flex-direction: column !important;
     gap: 8px !important;
+}
+.app-title h1 {
+    margin-bottom: 2px !important;
 }
 .header-row {
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
     gap: 12px !important;
-    margin-bottom: 6px !important;
+    margin-bottom: 4px !important;
 }
 .header-row button {
     white-space: nowrap !important;
@@ -391,13 +408,14 @@ CUSTOM_CSS = """
     white-space: nowrap !important;
 }
 .inpaint-panel {
+    border-radius: var(--block-radius) !important;
     gap: 8px !important;
 }
 .inpaint-controls-row {
     gap: 8px !important;
 }
 .dual-range {
-    padding: 4px 2px 2px 2px;
+    padding: 8px 10px 6px 10px;
 }
 .dual-range-header {
     display: flex;
@@ -519,10 +537,10 @@ SEED_INFO = {
     "CFG Sweep": "Shared by all CFG variations (-1 = random)",
     "Seed Batch": "Base seed, +1 per variation (-1 = random seeds)",
 }
-AUDIO_ACCORDION_LABEL = "🎛️ Audio Input (Remix / Inpainting)"
-POSTPROC_ACCORDION_LABEL = "🎚️ Output & Post-Processing"
-DELETE_BUTTON_LABEL = "🗑️ Delete Selected"
-CONFIRM_DELETE_LABEL = "⚠️ Confirm Delete"
+AUDIO_ACCORDION_LABEL = "Audio Input (Remix / Inpainting)"
+POSTPROC_ACCORDION_LABEL = "Output & Post-Processing"
+DELETE_BUTTON_LABEL = "Delete Selected"
+CONFIRM_DELETE_LABEL = "Confirm Delete?"
 HISTORY_PLACEHOLDER = "Select a WAV row below to inspect its settings."
 HISTORY_EMPTY_MSG = "No generated WAV files found in outputs/ yet. Generate audio in any model tab to see it here."
 
@@ -1228,7 +1246,7 @@ def build_model_tab(
                     maximum=int(spec.max_duration),
                     value=int(spec.default_duration),
                     step=1,
-                    label="Duration (seconds)",
+                    label="Duration (s)",
                     scale=1,
                 )
                 steps = gr.Slider(
@@ -1279,8 +1297,8 @@ def build_model_tab(
                             info=SEED_INFO["Single"],
                         )
                         with gr.Row(elem_classes=["seed-actions"]):
-                            random_seed_btn = gr.Button("🎲 Random", size="sm", min_width=60)
-                            reuse_seed_btn = gr.Button("♻️ Reuse Last", size="sm", min_width=60, interactive=False)
+                            random_seed_btn = gr.Button("Random", size="sm", min_width=60)
+                            reuse_seed_btn = gr.Button("Reuse Last", size="sm", min_width=60, interactive=False)
             last_seed_box = gr.Number(value=None, precision=0, visible=False)
             with gr.Accordion(AUDIO_ACCORDION_LABEL, open=False, elem_classes=["option-accordion"]) as audio_accordion:
                 audio_mode = gr.Radio(
@@ -1317,7 +1335,7 @@ def build_model_tab(
                                 label="Start (s)",
                                 elem_id=f"inpaint-start-{model_name}",
                             )
-                            set_start_btn = gr.Button("⏱ Set Start", size="sm")
+                            set_start_btn = gr.Button("Set Start", size="sm")
                         with gr.Column(scale=1, min_width=150):
                             inpaint_end = gr.Number(
                                 value=5.0,
@@ -1326,7 +1344,7 @@ def build_model_tab(
                                 label="End (s)",
                                 elem_id=f"inpaint-end-{model_name}",
                             )
-                            set_end_btn = gr.Button("⏱ Set End", size="sm")
+                            set_end_btn = gr.Button("Set End", size="sm")
             with gr.Accordion(POSTPROC_ACCORDION_LABEL, open=False, elem_classes=["option-accordion"]) as postproc_accordion:
                 embed_metadata_toggle = gr.Checkbox(
                     label="Embed generation metadata in WAV",
@@ -1344,18 +1362,18 @@ def build_model_tab(
                         maximum=5.0,
                         value=0.0,
                         step=0.1,
-                        label="Fade-Out (seconds)",
+                        label="Fade-Out (s)",
                     )
             with gr.Row(equal_height=True, elem_classes=["action-btn-row"]):
                 generate_btn = gr.Button(
-                    f"✨ Generate with {model_name}",
+                    f"Generate with {model_name}",
                     variant="primary",
                     size="lg",
                     scale=3,
                     min_width=130,
                 )
                 stop_btn = gr.Button(
-                    "⏹️ Stop",
+                    "Stop",
                     variant="stop",
                     size="lg",
                     scale=1,
@@ -1363,7 +1381,7 @@ def build_model_tab(
                     interactive=False,
                 )
                 clear_btn = gr.Button(
-                    "🗑️ Clear",
+                    "Clear",
                     variant="secondary",
                     size="lg",
                     scale=1,
@@ -2007,7 +2025,7 @@ def create_app():
     """Create the root Gradio Blocks application."""
     with gr.Blocks(title="Stable Audio Lab") as demo:
         demo.load(None, js=APP_JS)
-        gr.Markdown("# Stable Audio Lab")
+        gr.Markdown("# Stable Audio Lab", elem_classes=["app-title"])
         with gr.Row(elem_classes=["header-row"]):
             gr.Markdown(f"*{get_device_info()}*")
             unload_btn = gr.Button(
@@ -2046,16 +2064,16 @@ def create_app():
                 selected_wav_state = gr.State(None)
                 delete_armed_state = gr.State(False)
 
-                with gr.Row(elem_classes=["action-btn-row"]):
-                    refresh_history_btn = gr.Button("🔄 Refresh History", variant="secondary", scale=1)
+                with gr.Row(elem_classes=["history-toolbar"]):
+                    refresh_history_btn = gr.Button("Refresh", variant="secondary", scale=1)
                     load_settings_btn = gr.Button(
-                        "📥 Load Settings into Tab",
+                        "Load Settings",
                         variant="primary",
                         interactive=False,
                         scale=2,
                     )
                     send_remix_btn = gr.Button(
-                        "🎛️ Send to Remix / Inpaint",
+                        "Send to Remix / Inpaint",
                         variant="secondary",
                         interactive=False,
                         scale=2,
@@ -2067,7 +2085,7 @@ def create_app():
                         scale=1,
                     )
 
-                with gr.Row():
+                with gr.Row(equal_height=True):
                     history_audio = gr.Audio(label="Selected Output Preview", type="filepath", interactive=False)
                     history_meta = gr.Textbox(
                         label="Embedded Generation Metadata",
@@ -2075,7 +2093,7 @@ def create_app():
                         interactive=False,
                         lines=6,
                         max_lines=8,
-                        elem_classes=["status-console"],
+                        elem_classes=["status-console", "history-meta"],
                     )
 
                 history_table = gr.Dataframe(
