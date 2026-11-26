@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=-1, help="Random seed (-1 for random)")
     parser.add_argument("--output", "-o", type=str, default=None, help="Output .wav path")
     parser.add_argument("--init-audio", type=str, default=None, help="Source audio path for Audio-to-Audio remix")
-    parser.add_argument("--init-noise-level", type=float, default=0.7, help="Remix noise strength in (0.0, 1.0]")
+    parser.add_argument("--init-noise-level", type=float, default=0.5, help="Remix noise strength in (0.0, 1.0]")
     parser.add_argument("--inpaint-audio", type=str, default=None, help="Source audio path for inpainting")
     parser.add_argument("--inpaint-start", type=float, default=None, help="Inpaint start time in seconds")
     parser.add_argument("--inpaint-end", type=float, default=None, help="Inpaint end time in seconds")

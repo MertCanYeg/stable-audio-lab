@@ -40,7 +40,7 @@ def generate_audio_tool(
     output: str | None = None,
     embed_metadata: bool = True,
     init_audio: str | None = None,
-    init_noise_level: float = 0.7,
+    init_noise_level: float = 0.5,
     inpaint_audio: str | None = None,
     inpaint_start: float | None = None,
     inpaint_end: float | None = None,

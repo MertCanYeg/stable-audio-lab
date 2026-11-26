@@ -141,7 +141,7 @@ class GenerationConfig:
     embed_metadata: bool = True
     chunked_decode: Optional[bool] = True
     init_audio_path: Optional[Union[str, Path]] = None
-    init_noise_level: float = 0.7
+    init_noise_level: float = 0.5
     inpaint_audio_path: Optional[Union[str, Path]] = None
     inpaint_start: Optional[float] = None
     inpaint_end: Optional[float] = None
