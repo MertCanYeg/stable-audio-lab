@@ -56,6 +56,34 @@ APP_JS = """
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
+    const fmtTime = (sec) => {
+        const s = Math.max(0, Number(sec) || 0);
+        const mins = Math.floor(s / 60);
+        const rem = (s - mins * 60).toFixed(1).padStart(4, '0');
+        return mins + ':' + rem;
+    };
+
+    const seekSourceAudio = (tab, sec) => {
+        const root = document.getElementById('source-audio-' + tab);
+        if (!root) return;
+        const findAudio = (node) => {
+            if (!node) return null;
+            const direct = node.querySelector('audio');
+            if (direct) return direct;
+            for (const el of node.querySelectorAll('*')) {
+                if (el.shadowRoot) {
+                    const found = findAudio(el.shadowRoot);
+                    if (found) return found;
+                }
+            }
+            return null;
+        };
+        const audio = findAudio(root);
+        if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+            audio.currentTime = Math.min(Math.max(0, sec), audio.duration);
+        }
+    };
+
     const syncFill = (box, s, e) => {
         const maxV = Math.max(0.2, parseFloat(box.dataset.max || '15'));
         const fill = box.querySelector('.dual-range-fill');
@@ -65,7 +93,7 @@ APP_JS = """
             fill.style.width = Math.max(0.5, ((e - s) / maxV) * 100).toFixed(2) + '%';
         }
         if (readout) {
-            readout.textContent = s.toFixed(1) + 's – ' + e.toFixed(1) + 's (' + Math.max(0.1, e - s).toFixed(1) + 's)';
+            readout.textContent = fmtTime(s) + ' – ' + fmtTime(e) + ' · ' + Math.max(0.1, e - s).toFixed(1) + 's';
         }
     };
 
@@ -91,10 +119,11 @@ APP_JS = """
             const maxV = Math.max(0.2, parseFloat(box.dataset.max || '15'));
             let s = parseFloat(sEl.value);
             let en = parseFloat(eEl.value);
-            if (rangeInput.classList.contains('dual-range-start') && s > en - 0.1) {
+            const isStart = rangeInput.classList.contains('dual-range-start');
+            if (isStart && s > en - 0.1) {
                 s = Math.max(0, Math.round((en - 0.1) * 10) / 10);
                 sEl.value = s.toFixed(1);
-            } else if (rangeInput.classList.contains('dual-range-end') && en < s + 0.1) {
+            } else if (!isStart && en < s + 0.1) {
                 en = Math.min(maxV, Math.round((s + 0.1) * 10) / 10);
                 eEl.value = en.toFixed(1);
             }
@@ -103,6 +132,7 @@ APP_JS = """
             if (tab) {
                 setGradioNumber('inpaint-start-' + tab, s, commit);
                 setGradioNumber('inpaint-end-' + tab, en, commit);
+                seekSourceAudio(tab, isStart ? s : en);
             }
             return;
         }
@@ -360,18 +390,29 @@ CUSTOM_CSS = """
 .history-table th {
     white-space: nowrap !important;
 }
+.inpaint-panel {
+    gap: 8px !important;
+}
+.inpaint-controls-row {
+    gap: 8px !important;
+}
 .dual-range {
-    padding: 6px 2px 2px 2px;
+    padding: 4px 2px 2px 2px;
 }
 .dual-range-header {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     font-size: 0.82rem;
     margin-bottom: 6px;
 }
 .dual-range-readout {
     font-weight: 600;
     color: var(--color-accent, #f97316);
+    background: rgba(249, 115, 22, 0.12);
+    border: 1px solid rgba(249, 115, 22, 0.3);
+    padding: 2px 8px;
+    border-radius: 999px;
     font-variant-numeric: tabular-nums;
 }
 .dual-range-track {
@@ -381,17 +422,28 @@ CUSTOM_CSS = """
 .dual-range-rail,
 .dual-range-fill {
     position: absolute;
-    top: 8px;
-    height: 6px;
+    top: 7px;
+    height: 8px;
     border-radius: 999px;
 }
 .dual-range-rail {
     left: 0;
     right: 0;
-    background: var(--border-color-primary);
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-sizing: border-box;
 }
 .dual-range-fill {
     background: var(--color-accent, #f97316);
+    box-shadow: 0 0 8px rgba(249, 115, 22, 0.35);
+}
+.dual-range-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--body-text-color-subdued);
+    font-variant-numeric: tabular-nums;
+    margin-top: 2px;
 }
 .dual-range-input {
     position: absolute;
@@ -413,6 +465,10 @@ CUSTOM_CSS = """
     border: 2px solid #ffffff;
     cursor: ew-resize;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+    transition: transform 0.1s ease;
+}
+.dual-range-input::-webkit-slider-thumb:hover {
+    transform: scale(1.12);
 }
 .dual-range-input::-moz-range-thumb {
     pointer-events: auto;
@@ -423,6 +479,10 @@ CUSTOM_CSS = """
     border: 2px solid #ffffff;
     cursor: ew-resize;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+    transition: transform 0.1s ease;
+}
+.dual-range-input::-moz-range-thumb:hover {
+    transform: scale(1.12);
 }
 """
 
@@ -488,6 +548,17 @@ def postproc_accordion_label(embed_metadata: bool, normalize: bool, fade_out_sec
     return f"{POSTPROC_ACCORDION_LABEL} · {' · '.join(parts)}" if parts else POSTPROC_ACCORDION_LABEL
 
 
+def _format_timecode(seconds: float, tenths: bool = True) -> str:
+    """Format seconds as m:ss.t (or m:ss) for timeline range readouts."""
+    sec = max(0.0, float(seconds))
+    if not tenths:
+        total = int(round(sec))
+        return f"{total // 60}:{total % 60:02d}"
+    mins = int(sec // 60)
+    rem = sec - mins * 60
+    return f"{mins}:{rem:04.1f}"
+
+
 def _render_inpaint_range_html(tab_key: str, max_s: float, start_s: float, end_s: float) -> str:
     """Render a native dual-thumb HTML range slider for selecting Inpaint Start and End on one track."""
     max_v = max(0.2, round(float(max_s), 1))
@@ -499,13 +570,18 @@ def _render_inpaint_range_html(tab_key: str, max_s: float, start_s: float, end_s
         f'<div class="dual-range" data-tab="{tab_key}" data-max="{max_v:.1f}">'
         f'<div class="dual-range-header">'
         f"<span>Inpaint Range</span>"
-        f'<span class="dual-range-readout">{s:.1f}s – {e:.1f}s ({e - s:.1f}s)</span>'
+        f'<span class="dual-range-readout">{_format_timecode(s)} – {_format_timecode(e)} · {e - s:.1f}s</span>'
         f"</div>"
         f'<div class="dual-range-track">'
         f'<div class="dual-range-rail"></div>'
         f'<div class="dual-range-fill" style="left:{left_pct:.2f}%;width:{width_pct:.2f}%"></div>'
         f'<input type="range" class="dual-range-input dual-range-start" min="0" max="{max_v:.1f}" step="0.1" value="{s:.1f}">'
         f'<input type="range" class="dual-range-input dual-range-end" min="0" max="{max_v:.1f}" step="0.1" value="{e:.1f}">'
+        f"</div>"
+        f'<div class="dual-range-ticks">'
+        f"<span>0:00</span>"
+        f"<span>{_format_timecode(max_v / 2.0, tenths=False)}</span>"
+        f"<span>{_format_timecode(max_v, tenths=False)}</span>"
         f"</div>"
         f"</div>"
     )
@@ -1215,6 +1291,7 @@ def build_model_tab(
                 source_audio = gr.Audio(
                     label="Source Audio",
                     type="filepath",
+                    sources=["upload"],
                     visible=False,
                     elem_id=f"source-audio-{model_name}",
                 )
@@ -1227,28 +1304,29 @@ def build_model_tab(
                     info="Lower values preserve more of the source audio; 1.0 regenerates freely.",
                     visible=False,
                 )
-                with gr.Group(visible=False) as inpaint_row:
+                with gr.Group(visible=False, elem_classes=["inpaint-panel"]) as inpaint_row:
                     inpaint_range = gr.HTML(
                         value=_render_inpaint_range_html(model_name, float(spec.max_duration), 0.0, 5.0),
                     )
-                    with gr.Row():
-                        inpaint_start = gr.Number(
-                            value=0.0,
-                            minimum=0.0,
-                            step=0.1,
-                            label="Inpaint Start (s)",
-                            elem_id=f"inpaint-start-{model_name}",
-                        )
-                        inpaint_end = gr.Number(
-                            value=5.0,
-                            minimum=0.1,
-                            step=0.1,
-                            label="Inpaint End (s)",
-                            elem_id=f"inpaint-end-{model_name}",
-                        )
-                    with gr.Row(elem_classes=["seed-actions"]):
-                        set_start_btn = gr.Button("Set Start from Playhead", size="sm")
-                        set_end_btn = gr.Button("Set End from Playhead", size="sm")
+                    with gr.Row(elem_classes=["inpaint-controls-row"]):
+                        with gr.Column(scale=1, min_width=150):
+                            inpaint_start = gr.Number(
+                                value=0.0,
+                                minimum=0.0,
+                                step=0.1,
+                                label="Start (s)",
+                                elem_id=f"inpaint-start-{model_name}",
+                            )
+                            set_start_btn = gr.Button("⏱ Set Start", size="sm")
+                        with gr.Column(scale=1, min_width=150):
+                            inpaint_end = gr.Number(
+                                value=5.0,
+                                minimum=0.1,
+                                step=0.1,
+                                label="End (s)",
+                                elem_id=f"inpaint-end-{model_name}",
+                            )
+                            set_end_btn = gr.Button("⏱ Set End", size="sm")
             with gr.Accordion(POSTPROC_ACCORDION_LABEL, open=False, elem_classes=["option-accordion"]) as postproc_accordion:
                 embed_metadata_toggle = gr.Checkbox(
                     label="Embed generation metadata in WAV",

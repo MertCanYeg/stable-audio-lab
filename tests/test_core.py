@@ -891,7 +891,10 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         html = _render_inpaint_range_html("small-music", 30.0, 2.5, 8.0)
         self.assertIn('data-tab="small-music"', html)
         self.assertIn('data-max="30.0"', html)
-        self.assertIn("2.5s – 8.0s (5.5s)", html)
+        self.assertIn("0:02.5 – 0:08.0 · 5.5s", html)
+        self.assertIn("<span>0:00</span>", html)
+        self.assertIn("<span>0:15</span>", html)
+        self.assertIn("<span>0:30</span>", html)
         self.assertIn('class="dual-range-input dual-range-start"', html)
         self.assertIn('class="dual-range-input dual-range-end"', html)
 
