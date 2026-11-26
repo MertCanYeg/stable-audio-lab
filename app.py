@@ -397,14 +397,23 @@ CUSTOM_CSS = """
     overflow-y: auto !important;
     overflow-x: hidden !important;
 }
-.history-table table {
+.prompt-templates-table {
+    max-height: 280px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+}
+.history-table table,
+.prompt-templates-table table {
     width: 100% !important;
 }
-.history-table td {
+.history-table td,
+.prompt-templates-table td {
     word-break: break-word !important;
     white-space: normal !important;
+    cursor: pointer !important;
 }
-.history-table th {
+.history-table th,
+.prompt-templates-table th {
     white-space: nowrap !important;
 }
 .inpaint-panel {
@@ -1948,11 +1957,29 @@ def build_model_tab(
     )
 
     if spec.examples:
-        gr.Examples(
-            examples=spec.examples,
-            inputs=[prompt, duration],
-            examples_per_page=100,
+        templates_table = gr.Dataframe(
+            value=spec.examples,
+            headers=["Prompt", "Duration (s)"],
+            datatype=["str", "number"],
+            interactive=False,
+            wrap=True,
+            column_widths=["88%", "12%"],
             label="Prompt Templates (click any row to load)",
+            elem_classes=["prompt-templates-table"],
+        )
+
+        def on_select_template(evt: gr.SelectData):
+            row_idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+            if row_idx is None or row_idx < 0 or row_idx >= len(spec.examples):
+                return gr.skip(), gr.skip()
+            ex_prompt, ex_dur = spec.examples[row_idx][:2]
+            return str(ex_prompt), ex_dur
+
+        templates_table.select(
+            fn=on_select_template,
+            inputs=[],
+            outputs=[prompt, duration],
+            show_progress="hidden",
         )
 
     return {
