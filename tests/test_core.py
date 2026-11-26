@@ -817,11 +817,20 @@ class TestRobustnessAndCancellation(unittest.TestCase):
         _LIVE_LOGS.pop("test-tab", None)
 
     def test_read_playhead_js_helper(self):
-        from app import _read_playhead_js
+        from app import _read_playhead_js, _render_inpaint_range_html
 
-        js_code = _read_playhead_js("source-audio-small-music")
+        js_code = _read_playhead_js("source-audio-small-music", "small-music", is_end=True)
         self.assertIn("source-audio-small-music", js_code)
-        self.assertIn("currentTime", js_code)
+        self.assertIn("time#time", js_code)
+        self.assertLess(js_code.index("time#time"), js_code.index("currentTime"))
+        self.assertIn("dual-range-end", js_code)
+
+        html = _render_inpaint_range_html("small-music", 30.0, 2.5, 8.0)
+        self.assertIn('data-tab="small-music"', html)
+        self.assertIn('data-max="30.0"', html)
+        self.assertIn("2.5s – 8.0s (5.5s)", html)
+        self.assertIn('class="dual-range-input dual-range-start"', html)
+        self.assertIn('class="dual-range-input dual-range-end"', html)
 
     def test_mcp_and_download_models_helpers(self):
         import download_models

@@ -32,7 +32,7 @@ from core import (
     validate_cfg_sweep,
 )
 
-AUTO_SCROLL_JS = """
+APP_JS = """
 () => {
     const observer = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
@@ -53,6 +53,77 @@ AUTO_SCROLL_JS = """
         }
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    const syncFill = (box, s, e) => {
+        const maxV = Math.max(0.2, parseFloat(box.dataset.max || '15'));
+        const fill = box.querySelector('.dual-range-fill');
+        const readout = box.querySelector('.dual-range-readout');
+        if (fill) {
+            fill.style.left = ((s / maxV) * 100).toFixed(2) + '%';
+            fill.style.width = Math.max(0.5, ((e - s) / maxV) * 100).toFixed(2) + '%';
+        }
+        if (readout) {
+            readout.textContent = s.toFixed(1) + 's – ' + e.toFixed(1) + 's (' + Math.max(0.1, e - s).toFixed(1) + 's)';
+        }
+    };
+
+    const setGradioNumber = (elemId, val, commit) => {
+        const input = document.querySelector('#' + elemId + ' input');
+        if (!input) return;
+        const formatted = val.toFixed(1);
+        if (input.value !== formatted) {
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(input, formatted);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (commit) input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const handleDualEvent = (e, commit) => {
+        const rangeInput = e.target.closest('.dual-range-input');
+        if (rangeInput) {
+            const box = rangeInput.closest('.dual-range');
+            const sEl = box?.querySelector('.dual-range-start');
+            const eEl = box?.querySelector('.dual-range-end');
+            if (!box || !sEl || !eEl) return;
+            const maxV = Math.max(0.2, parseFloat(box.dataset.max || '15'));
+            let s = parseFloat(sEl.value);
+            let en = parseFloat(eEl.value);
+            if (rangeInput.classList.contains('dual-range-start') && s > en - 0.1) {
+                s = Math.max(0, Math.round((en - 0.1) * 10) / 10);
+                sEl.value = s.toFixed(1);
+            } else if (rangeInput.classList.contains('dual-range-end') && en < s + 0.1) {
+                en = Math.min(maxV, Math.round((s + 0.1) * 10) / 10);
+                eEl.value = en.toFixed(1);
+            }
+            syncFill(box, s, en);
+            const tab = box.dataset.tab;
+            if (tab) {
+                setGradioNumber('inpaint-start-' + tab, s, commit);
+                setGradioNumber('inpaint-end-' + tab, en, commit);
+            }
+            return;
+        }
+        const wrap = e.target.closest('[id^="inpaint-start-"], [id^="inpaint-end-"]');
+        if (!wrap) return;
+        const tab = wrap.id.replace(/^inpaint-(start|end)-/, '');
+        const box = document.querySelector('.dual-range[data-tab="' + tab + '"]');
+        const sIn = document.querySelector('#inpaint-start-' + tab + ' input');
+        const eIn = document.querySelector('#inpaint-end-' + tab + ' input');
+        const sEl = box?.querySelector('.dual-range-start');
+        const eEl = box?.querySelector('.dual-range-end');
+        if (!box || !sIn || !eIn || !sEl || !eEl) return;
+        const s = parseFloat(sIn.value);
+        const en = parseFloat(eIn.value);
+        if (!Number.isNaN(s) && !Number.isNaN(en) && en > s) {
+            sEl.value = s.toFixed(1);
+            eEl.value = en.toFixed(1);
+            syncFill(box, s, en);
+        }
+    };
+
+    document.addEventListener('input', (e) => handleDualEvent(e, false));
+    document.addEventListener('change', (e) => handleDualEvent(e, true));
 }
 """
 
@@ -284,6 +355,70 @@ CUSTOM_CSS = """
 .history-table th {
     white-space: nowrap !important;
 }
+.dual-range {
+    padding: 6px 2px 2px 2px;
+}
+.dual-range-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    margin-bottom: 6px;
+}
+.dual-range-readout {
+    font-weight: 600;
+    color: var(--color-accent, #f97316);
+    font-variant-numeric: tabular-nums;
+}
+.dual-range-track {
+    position: relative;
+    height: 22px;
+}
+.dual-range-rail,
+.dual-range-fill {
+    position: absolute;
+    top: 8px;
+    height: 6px;
+    border-radius: 999px;
+}
+.dual-range-rail {
+    left: 0;
+    right: 0;
+    background: var(--border-color-primary);
+}
+.dual-range-fill {
+    background: var(--color-accent, #f97316);
+}
+.dual-range-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    margin: 0;
+    background: transparent;
+    pointer-events: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+.dual-range-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    pointer-events: auto;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-accent, #f97316);
+    border: 2px solid #ffffff;
+    cursor: ew-resize;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.dual-range-input::-moz-range-thumb {
+    pointer-events: auto;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-accent, #f97316);
+    border: 2px solid #ffffff;
+    cursor: ew-resize;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
 """
 
 TAB_CONFIG = [
@@ -348,35 +483,75 @@ def postproc_accordion_label(embed_metadata: bool, normalize: bool, fade_out_sec
     return f"{POSTPROC_ACCORDION_LABEL} · {' · '.join(parts)}" if parts else POSTPROC_ACCORDION_LABEL
 
 
-def _read_playhead_js(audio_elem_id: str) -> str:
-    """Return a minimal JS snippet reading the current playback time (seconds) from gr.Audio."""
+def _render_inpaint_range_html(tab_key: str, max_s: float, start_s: float, end_s: float) -> str:
+    """Render a native dual-thumb HTML range slider for selecting Inpaint Start and End on one track."""
+    max_v = max(0.2, round(float(max_s), 1))
+    s = max(0.0, min(round(float(start_s), 1), round(max_v - 0.1, 1)))
+    e = max(round(min(max_v, s + 0.1), 1), min(round(float(end_s), 1), max_v))
+    left_pct = (s / max_v) * 100.0
+    width_pct = max(0.5, ((e - s) / max_v) * 100.0)
+    return (
+        f'<div class="dual-range" data-tab="{tab_key}" data-max="{max_v:.1f}">'
+        f'<div class="dual-range-header">'
+        f"<span>Inpaint Range</span>"
+        f'<span class="dual-range-readout">{s:.1f}s – {e:.1f}s ({e - s:.1f}s)</span>'
+        f"</div>"
+        f'<div class="dual-range-track">'
+        f'<div class="dual-range-rail"></div>'
+        f'<div class="dual-range-fill" style="left:{left_pct:.2f}%;width:{width_pct:.2f}%"></div>'
+        f'<input type="range" class="dual-range-input dual-range-start" min="0" max="{max_v:.1f}" step="0.1" value="{s:.1f}">'
+        f'<input type="range" class="dual-range-input dual-range-end" min="0" max="{max_v:.1f}" step="0.1" value="{e:.1f}">'
+        f"</div>"
+        f"</div>"
+    )
+
+
+def _read_playhead_js(audio_elem_id: str, tab_key: str, is_end: bool = False) -> str:
+    """Read gr.Audio's displayed WaveSurfer time#time (or fallback <audio>.currentTime) and sync the dual-range UI."""
+    thumb_cls = "dual-range-end" if is_end else "dual-range-start"
     return f"""(currentVal) => {{
         const root = document.getElementById('{audio_elem_id}');
         if (!root) return currentVal;
-        const findAudio = (node) => {{
+
+        const findInTree = (node, selector) => {{
             if (!node) return null;
-            if (node.tagName === 'AUDIO') return node;
+            const direct = node.querySelector(selector);
+            if (direct) return direct;
             for (const el of node.querySelectorAll('*')) {{
-                if (el.tagName === 'AUDIO') return el;
                 if (el.shadowRoot) {{
-                    const found = findAudio(el.shadowRoot);
+                    const found = findInTree(el.shadowRoot, selector);
                     if (found) return found;
                 }}
             }}
             return null;
         }};
-        const audio = findAudio(root);
-        if (audio && Number.isFinite(audio.currentTime)) {{
-            return Math.round(audio.currentTime * 10) / 10;
-        }}
-        const timeEl = root.querySelector('time');
+
+        let sec = null;
+        const timeEl = findInTree(root, 'time#time') || findInTree(root, '.timestamps time');
         if (timeEl) {{
             const parts = timeEl.textContent.trim().split(':').map(Number);
-            if (parts.length === 2 && parts.every(Number.isFinite)) {{
-                return Math.round((parts[0] * 60 + parts[1]) * 10) / 10;
+            if (parts.length >= 2 && parts.every(Number.isFinite)) {{
+                sec = parts.reduce((acc, v) => acc * 60 + v, 0);
             }}
         }}
-        return currentVal;
+        const audio = findInTree(root, 'audio');
+        if (audio && Number.isFinite(audio.currentTime) && audio.currentTime > 0) {{
+            if (sec === null || Math.abs(audio.currentTime - sec) < 1.5) {{
+                sec = audio.currentTime;
+            }}
+        }}
+        if (sec === null) return currentVal;
+
+        const rounded = Math.round(sec * 10) / 10;
+        const box = document.querySelector('.dual-range[data-tab="{tab_key}"]');
+        if (box) {{
+            const thumb = box.querySelector('.{thumb_cls}');
+            if (thumb) {{
+                thumb.value = rounded.toFixed(1);
+                thumb.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            }}
+        }}
+        return rounded;
     }}"""
 
 
@@ -988,20 +1163,23 @@ def build_model_tab(
                     visible=False,
                 )
                 with gr.Group(visible=False) as inpaint_row:
+                    inpaint_range = gr.HTML(
+                        value=_render_inpaint_range_html(model_name, float(spec.max_duration), 0.0, 5.0),
+                    )
                     with gr.Row():
-                        inpaint_start = gr.Slider(
-                            minimum=0.0,
-                            maximum=float(spec.max_duration),
+                        inpaint_start = gr.Number(
                             value=0.0,
+                            minimum=0.0,
                             step=0.1,
                             label="Inpaint Start (s)",
+                            elem_id=f"inpaint-start-{model_name}",
                         )
-                        inpaint_end = gr.Slider(
-                            minimum=0.1,
-                            maximum=float(spec.max_duration),
+                        inpaint_end = gr.Number(
                             value=5.0,
+                            minimum=0.1,
                             step=0.1,
                             label="Inpaint End (s)",
+                            elem_id=f"inpaint-end-{model_name}",
                         )
                     with gr.Row(elem_classes=["seed-actions"]):
                         set_start_btn = gr.Button("Set Start from Playhead", size="sm")
@@ -1167,14 +1345,14 @@ def build_model_tab(
     )
 
     def on_source_audio_change(path: str | None, current_start: float | None, current_end: float | None):
-        """Match Duration and slider ranges from the uploaded source audio."""
+        """Match Duration and dual-range slider bounds from the uploaded source audio."""
         if not path:
-            return gr.update(), gr.update(), gr.update()
+            return gr.update(), gr.update(), gr.update(), gr.update()
         try:
             src_seconds = float(sf.info(path).duration)
         except Exception:
             gr.Warning("Could not read this audio file. Please use WAV, FLAC, OGG, or MP3.")
-            return gr.update(), gr.update(), gr.update()
+            return gr.update(), gr.update(), gr.update(), gr.update()
         dur_val = int(max(1, min(spec.max_duration, round(src_seconds))))
         max_s = max(0.2, round(src_seconds, 1))
         end_default = min(float(current_end), max_s) if (current_end and float(current_end) > 0) else min(5.0, max_s)
@@ -1186,24 +1364,25 @@ def build_model_tab(
             gr.Info(f"Duration set to {dur_val}s to match the source audio ({src_seconds:.1f}s).")
         return (
             dur_val,
-            gr.update(maximum=max_s, value=start_val),
-            gr.update(maximum=max_s, value=end_val),
+            start_val,
+            end_val,
+            _render_inpaint_range_html(model_name, max_s, start_val, end_val),
         )
 
     source_audio.change(
         fn=on_source_audio_change,
         inputs=[source_audio, inpaint_start, inpaint_end],
-        outputs=[duration, inpaint_start, inpaint_end],
+        outputs=[duration, inpaint_start, inpaint_end, inpaint_range],
     )
 
-    inpaint_start.release(
-        fn=lambda s: gr.update(playback_position=float(s)),
+    inpaint_start.change(
+        fn=lambda s: gr.skip() if s is None else gr.update(playback_position=float(s)),
         inputs=[inpaint_start],
         outputs=[source_audio],
         show_progress="hidden",
     )
-    inpaint_end.release(
-        fn=lambda e: gr.update(playback_position=float(e)),
+    inpaint_end.change(
+        fn=lambda e: gr.skip() if e is None else gr.update(playback_position=float(e)),
         inputs=[inpaint_end],
         outputs=[source_audio],
         show_progress="hidden",
@@ -1212,13 +1391,13 @@ def build_model_tab(
         fn=None,
         inputs=[inpaint_start],
         outputs=[inpaint_start],
-        js=_read_playhead_js(f"source-audio-{model_name}"),
+        js=_read_playhead_js(f"source-audio-{model_name}", model_name, is_end=False),
     )
     set_end_btn.click(
         fn=None,
         inputs=[inpaint_end],
         outputs=[inpaint_end],
-        js=_read_playhead_js(f"source-audio-{model_name}"),
+        js=_read_playhead_js(f"source-audio-{model_name}", model_name, is_end=True),
     )
 
     def on_postproc_change(embed: bool, normalize: bool, fade: float):
@@ -1592,6 +1771,7 @@ def build_model_tab(
         "source_audio": source_audio,
         "init_noise_level": init_noise_level,
         "inpaint_row": inpaint_row,
+        "inpaint_range": inpaint_range,
         "inpaint_start": inpaint_start,
         "inpaint_end": inpaint_end,
     }
@@ -1644,7 +1824,7 @@ def _format_metadata_summary(rec: dict) -> str:
 def create_app():
     """Create the root Gradio Blocks application."""
     with gr.Blocks(title="Stable Audio Lab") as demo:
-        demo.load(None, js=AUTO_SCROLL_JS)
+        demo.load(None, js=APP_JS)
         gr.Markdown("# Stable Audio Lab")
         with gr.Row(elem_classes=["header-row"]):
             gr.Markdown(f"*{get_device_info()}*")
@@ -1794,6 +1974,7 @@ def create_app():
                             ctrl["source_audio"],
                             ctrl["init_noise_level"],
                             ctrl["inpaint_row"],
+                            ctrl["inpaint_range"],
                             ctrl["inpaint_start"],
                             ctrl["inpaint_end"],
                         ]
@@ -1845,21 +2026,23 @@ def create_app():
                     return tuple(updates)
 
                 def on_send_to_remix(selected_path: str | None):
-                    noop = [gr.update()] * (1 + len(tab_order) * 7)
+                    noop = [gr.update()] * (1 + len(tab_order) * 8)
                     if not selected_path:
                         gr.Warning("Please select an output file first.")
                         return tuple(noop)
                     meta = read_wav_metadata(selected_path)
                     target_model = meta.get("model") if (meta and meta.get("model") in MODELS) else "small-music"
 
+                    range_update = gr.update()
                     start_update = gr.update()
                     end_update = gr.update()
                     try:
                         src_seconds = float(sf.info(selected_path).duration)
                         max_s = max(0.2, round(src_seconds, 1))
                         end_val = round(min(5.0, max_s), 1)
-                        start_update = gr.update(maximum=max_s, value=0.0)
-                        end_update = gr.update(maximum=max_s, value=end_val)
+                        range_update = _render_inpaint_range_html(target_model, max_s, 0.0, end_val)
+                        start_update = 0.0
+                        end_update = end_val
                     except Exception:
                         pass
 
@@ -1873,12 +2056,13 @@ def create_app():
                                     gr.update(value=selected_path, visible=True),
                                     gr.update(visible=True),
                                     gr.update(visible=False),
+                                    range_update,
                                     start_update,
                                     end_update,
                                 ]
                             )
                         else:
-                            updates.extend([gr.update()] * 7)
+                            updates.extend([gr.update()] * 8)
 
                     gr.Info(f"Sent audio to '{target_model}' Remix / Inpaint input.")
                     return tuple(updates)
